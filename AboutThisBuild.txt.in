@@ -10,6 +10,7 @@ Gtkmm: ${GTKMM_VERSION}
 Lensfun: ${LENSFUN_VERSION}
 libjxl: ${JXL_VERSION}
 libavif: ${AVIF_VERSION}
+Wayland HDR preview: ${WAYLAND_HDR_VERSION}
 Build type: ${BUILD_TYPE}
 Build flags: ${CXX_FLAGS}
 Link flags: ${LFLAGS}

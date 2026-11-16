@@ -26,6 +26,7 @@
 #include "rtengine/profiling.h"
 
 #include "cropwindow.h"
+#include "hdrdisplay.h"
 #include "hidpi.h"
 #include "multilangmgr.h"
 #include "options.h"
@@ -61,6 +62,7 @@ ImageArea::ImageArea (ImageAreaPanel* p) : parent(p), fullImageWidth(0), fullIma
 
 ImageArea::~ImageArea ()
 {
+    hdrDisplay.reset();
 
     for (auto cropWin : cropWins) {
         delete cropWin;
@@ -280,8 +282,62 @@ bool ImageArea::on_draw(const ::Cairo::RefPtr< Cairo::Context> &cr)
         iBackBuffer.copySurface(cr);
     }
 
+    if (hdrDisplay) {
+        updateHdrDisplay(deviceScale);
+    }
 
     return true;
+}
+
+void ImageArea::setHdrPreview (bool enabled)
+{
+    if (enabled && !hdrDisplay && HdrDisplay::available()) {
+        hdrDisplay.reset(new HdrDisplay(*this));
+    } else if (!enabled && hdrDisplay) {
+        hdrDisplay->hide();
+        hdrDisplay.reset();
+    }
+
+    queue_draw();
+}
+
+void ImageArea::updateHdrDisplay (int deviceScale)
+{
+    if (!mainCropWindow) {
+        hdrDisplay->hide();
+        return;
+    }
+
+    // Everything drawn over the main crop's image, i.e. what the GTK drawing above shows on top of it, which
+    // the HDR surface would otherwise hide: guides, crop frame, pickers, indicators, detail windows, ...
+    const Cairo::RefPtr<Cairo::ImageSurface> overlay = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, get_width() * deviceScale, get_height() * deviceScale);
+    cairo_surface_set_device_scale(overlay->cobj(), deviceScale, deviceScale);
+    {
+        const Cairo::RefPtr<Cairo::Context> cr = Cairo::Context::create(overlay);
+        mainCropWindow->setHdrOverlayPass(true);
+        mainCropWindow->expose(cr);
+        mainCropWindow->setHdrOverlayPass(false);
+
+        for (auto i = cropWins.rbegin(); i != cropWins.rend(); ++i) {
+            (*i)->expose(cr);
+        }
+
+        if (App::get().options().showInfo && !infotext.empty()) {
+            iBackBuffer.copySurface(cr);
+        }
+    }
+
+    int x, y, width, height, stride;
+    const float* hdr = nullptr;
+    double paperwhite, maxNits;
+
+    if (!mainCropWindow->lockHdrImage(x, y, width, height, hdr, stride, paperwhite, maxNits)) {
+        hdrDisplay->hide();
+        return;
+    }
+
+    hdrDisplay->present(x, y, width, height, deviceScale, hdr, stride, overlay, paperwhite, maxNits);
+    mainCropWindow->unlockHdrImage();
 }
 
 

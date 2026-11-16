@@ -1970,8 +1970,16 @@ void Crop::update(int todo)
         std::vector<uint8_t> hdrClipFlags;
         hdr::computeClipFlags(*labnCrop, leftBorder, upperBorder, finalW, finalH, params.icm, hdrClipFlags, true);
 
+        // And for an HDR display, the image as HDR light
+        std::vector<float> hdrPreview;
+
+        if (parent->getHdrPreview()) {
+            hdr::computePreview(*labnCrop, leftBorder, upperBorder, finalW, finalH, params.icm, hdrPreview, true);
+        }
+
         cropImageListener->setDetailedCrop(
-            final, finaltrue, hdrClipFlags.empty() ? nullptr : &hdrClipFlags, params.icm, params.crop, params.cropGuide,
+            final, finaltrue, hdrClipFlags.empty() ? nullptr : &hdrClipFlags, hdrPreview.empty() ? nullptr : &hdrPreview,
+            params.icm, params.crop, params.cropGuide,
             rqcropx, rqcropy, rqcropw, rqcroph, skip);
         delete final;
         delete finaltrue;

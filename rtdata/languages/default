@@ -251,6 +251,7 @@ GENERAL_SLIDER;Slider
 GENERAL_UNCHANGED;(Unchanged)
 GENERAL_WARNING;Warning
 GIMP_PLUGIN_INFO;Welcome to the RawTherapee GIMP plugin!\nOnce you are done editing, simply close the main RawTherapee window and the image will be automatically imported in GIMP.
+HDRPREVIEW_TOOLTIP;HDR preview, only available with an HDR output profile, on a display system that supports it (currently Wayland compositors with color management).\nShows the image at the luminance the HDR export encodes, with paper white at the display's SDR white. Displays with less headroom than the image needs show it tone mapped by the compositor.\nOff: the SDR rendering.
 HISTOGRAM_TOOLTIP_B;Show/Hide blue histogram.
 HISTOGRAM_TOOLTIP_BAR;Show/Hide RGB indicator bar.
 HISTOGRAM_TOOLTIP_CHRO;Show/Hide chromaticity histogram.

@@ -88,6 +88,9 @@ class CropWindow final : public LWButtonListener, public CropDisplayHandler, pub
     Glib::ustring cropLabel;
     int backColor;
     bool decorated;
+    // While rendering the overlay for the HDR display: the image itself is left transparent (and so is the
+    // background), only what is drawn on top of it, including changes by the indicators, is drawn.
+    bool hdrOverlayPass = false;
     bool isFlawnOver;
 
     // crop frame description
@@ -214,6 +217,17 @@ public:
     void pointerMoved  (int bstate, int x, int y);
 
     void expose        (Cairo::RefPtr<Cairo::Context> cr);
+
+    void setHdrOverlayPass (bool enabled)
+    {
+        hdrOverlayPass = enabled;
+    }
+    // Where the detailed crop is shown, for the HDR display: logical position in the image area, visible size
+    // in device pixels, and the HDR data with its row stride in floats. False if there is nothing to show in
+    // HDR right now (no HDR data, or a rough preview while panning). Locks cropHandler.cimg while returning true:
+    // call unlockHdrImage() when done with the data.
+    bool lockHdrImage (int& x, int& y, int& width, int& height, const float*& hdr, int& stride, double& paperwhiteNits, double& maxNits);
+    void unlockHdrImage ();
 
     void setEditSubscriber (EditSubscriber* newSubscriber);
 

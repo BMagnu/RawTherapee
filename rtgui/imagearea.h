@@ -18,6 +18,8 @@
  */
 #pragma once
 
+#include <memory>
+
 #include <gtkmm.h>
 
 #include "cropguilistener.h"
@@ -33,6 +35,8 @@
 #include "zoompanel.h"
 
 class ImageAreaPanel;
+
+class HdrDisplay;
 
 class ImageArea final :
     public Gtk::DrawingArea,
@@ -72,6 +76,11 @@ protected:
     void get_preferred_width_for_height_vfunc (int height, int &minimum_width, int &natural_width) const override;
 
     int fullImageWidth, fullImageHeight;
+
+    // While the HDR preview is on: shows the main crop at its actual luminance
+    std::unique_ptr<HdrDisplay> hdrDisplay;
+    void updateHdrDisplay (int deviceScale);
+
 public:
     CropWindow* mainCropWindow;
     CropWindow* flawnOverWindow;
@@ -93,6 +102,10 @@ public:
     {
         indClippedPanel = indClippedPanel_;
     };
+
+    // Shows the main crop on the HDR display, see HdrDisplay. The engine must deliver HDR data too, see
+    // rtengine::StagedImageProcessor::setHdrPreview.
+    void setHdrPreview (bool enabled);
 
     void getScrollImageSize (int& w, int& h);
     void getScrollPosition  (int& x, int& y);

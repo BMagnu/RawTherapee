@@ -99,6 +99,7 @@ public:
         rtengine::IImage8* im,
         rtengine::IImage8* imworking,
         const std::vector<uint8_t>* hdrClipFlags,
+        const std::vector<float>* hdrPreview,
         const rtengine::procparams::ColorManagementParams& cmp,
         const rtengine::procparams::CropParams& cp,
         const rtengine::procparams::CropGuideParams& guideParams,
@@ -124,6 +125,11 @@ public:
     // For HDR output: per pixel rtengine::hdr::HdrClipFlag sets (in all three channels), scaled like
     // cropPixbuf but without interpolation, so flags never mix. Empty when the output isn't HDR.
     Glib::RefPtr<Gdk::Pixbuf> cropPixbufHdrFlags;
+    // While the HDR preview is on: the image as linear BT.2020 light relative to paper white, 3 floats per
+    // pixel, at the size of cropPixbuf. Empty otherwise.
+    std::vector<float> cropHdr;
+    int cropHdrWidth = 0;
+    int cropHdrHeight = 0;
 
     MyMutex cimg;
 
@@ -150,6 +156,7 @@ private:
     std::vector<unsigned char> cropimg;
     std::vector<unsigned char> cropimgtrue;
     std::vector<unsigned char> cropimgflags;
+    std::vector<float> cropimghdr;
     int cropimg_width, cropimg_height;
     PendingUpdate pendingUpdate;
     int deviceScale;

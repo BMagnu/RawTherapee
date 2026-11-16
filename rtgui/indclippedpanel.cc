@@ -114,6 +114,7 @@ void IndicateClippedPanel::setHdrMode (bool hdr)
     }
 
     indClippedSdr->set_visible(hdr);
+    hdrModeChanged.emit(hdr);
 }
 
 // inverts a toggle programmatically

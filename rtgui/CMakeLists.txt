@@ -150,6 +150,7 @@ set(NONCLISOURCEFILES
     filethumbnailbuttonset.cc
     filterpanel.cc
     guiutils.cc
+    hdrdisplay.cc
     hidpi.cc
     histogrampanel.cc
     history.cc
@@ -307,6 +308,23 @@ if(TCMALLOC_FOUND)
 endif()
 if(USE_LIBCANBERRA)
     target_link_libraries(rth PRIVATE PkgConfig::CANBERRA)
+endif()
+
+# HDR preview on Wayland: generate the client side of the color management protocol
+if(WAYLAND_HDR_FOUND)
+    set(COLOR_MANAGEMENT_XML "${WAYLAND_PROTOCOLS_DIR}/staging/color-management/color-management-v1.xml")
+    set(COLOR_MANAGEMENT_HEADER "${CMAKE_CURRENT_BINARY_DIR}/color-management-v1-client-protocol.h")
+    set(COLOR_MANAGEMENT_CODE "${CMAKE_CURRENT_BINARY_DIR}/color-management-v1-protocol.c")
+    add_custom_command(
+        OUTPUT "${COLOR_MANAGEMENT_HEADER}" "${COLOR_MANAGEMENT_CODE}"
+        COMMAND "${WAYLAND_SCANNER_EXECUTABLE}" client-header "${COLOR_MANAGEMENT_XML}" "${COLOR_MANAGEMENT_HEADER}"
+        COMMAND "${WAYLAND_SCANNER_EXECUTABLE}" private-code "${COLOR_MANAGEMENT_XML}" "${COLOR_MANAGEMENT_CODE}"
+        DEPENDS "${COLOR_MANAGEMENT_XML}"
+        VERBATIM
+    )
+    target_sources(rth PRIVATE "${COLOR_MANAGEMENT_HEADER}" "${COLOR_MANAGEMENT_CODE}")
+    target_compile_definitions(rth PRIVATE RT_WAYLAND_HDR)
+    target_link_libraries(rth PRIVATE PkgConfig::WAYLAND_CLIENT)
 endif()
 
 # Install executables

@@ -3331,6 +3331,11 @@ void ImProcCoordinator::getMonitorProfile(Glib::ustring& profile, RenderingInten
     intent = monitorIntent;
 }
 
+void ImProcCoordinator::setHdrPreview(bool enabled)
+{
+    hdrPreview = enabled;
+}
+
 void ImProcCoordinator::setSoftProofing(bool softProof, bool gamutCheck)
 {
     this->softProof = softProof;

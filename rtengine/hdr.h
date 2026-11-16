@@ -98,6 +98,12 @@ enum HdrClipFlag : uint8_t {
 // row by row. Leaves `flags` empty if the output isn't HDR.
 void computeClipFlags(const LabImage& lab, int cx, int cy, int cw, int ch, const procparams::ColorManagementParams& icm, std::vector<uint8_t>& flags, bool multiThread);
 
+// Renders a region of a Lab image as the HDR output would show it on an ideal HDR display: linear BT.2020
+// light relative to paper white, 3 floats per pixel, row by row, after the same encoding (and so, the same
+// clipping at the maximum luminance or HLG peak) as the export. Leaves `out` empty if the output isn't HDR.
+// TODO: once the SDR rendering becomes selectable, the SDR side of the preview must use it too.
+void computePreview(const LabImage& lab, int cx, int cy, int cw, int ch, const procparams::ColorManagementParams& icm, std::vector<float>& out, bool multiThread);
+
 // H.273 / CICP codes describing a profile, 2 (unspecified) when not matched exactly.
 // Primaries are matched on their chromaticities, the transfer curve by sampling.
 int cicpPrimaries(cmsHPROFILE profile);

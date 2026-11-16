@@ -18,6 +18,7 @@
  */
 #pragma once
 
+#include <atomic>
 #include <memory>
 
 #include "array2D.h"
@@ -88,6 +89,7 @@ protected:
     RenderingIntent monitorIntent;
     bool softProof;
     bool gamutCheck;
+    std::atomic<bool> hdrPreview{false};
     bool sharpMask;
     bool sharpMaskChanged;
     int scale;
@@ -461,6 +463,11 @@ public:
     void getMonitorProfile (Glib::ustring& profile, RenderingIntent& intent) const override;
     void setSoftProofing   (bool softProof, bool gamutCheck) override;
     void getSoftProofing   (bool &softProof, bool &gamutCheck) override;
+    void setHdrPreview     (bool enabled) override;
+    bool getHdrPreview     () const
+    {
+        return hdrPreview;
+    }
     ProcEvent setSharpMask (bool sharpMask) override;
     bool updateTryLock () override
     {

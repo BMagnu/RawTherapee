@@ -297,6 +297,85 @@ void computeClipFlags(const LabImage& lab, int cx, int cy, int cw, int ch, const
     }
 }
 
+namespace
+{
+
+// Linear BT.2020 (D65), the colour space the HDR preview is handed to the display in
+cmsHPROFILE bt2020Profile()
+{
+    static const struct Bt2020 {
+        cmsHPROFILE profile;
+
+        Bt2020()
+        {
+            const cmsCIExyY d65 = {0.3127, 0.3290, 1.0};
+            const cmsCIExyYTRIPLE primaries = {{0.708, 0.292, 1.0}, {0.170, 0.797, 1.0}, {0.131, 0.046, 1.0}};
+            cmsToneCurve* const linear = cmsBuildGamma(nullptr, 1.0);
+            cmsToneCurve* const curves[3] = {linear, linear, linear};
+            profile = cmsCreateRGBProfile(&d65, &primaries, curves);
+            cmsFreeToneCurve(linear);
+        }
+    } instance;
+
+    return instance.profile;
+}
+
+}
+
+void computePreview(const LabImage& lab, int cx, int cy, int cw, int ch, const procparams::ColorManagementParams& icm, std::vector<float>& out, bool multiThread)
+{
+    out.clear();
+    const std::optional<TransferFunction> transfer = outputTransferFunction(icm);
+
+    if (!transfer || cw <= 0 || ch <= 0) {
+        return;
+    }
+
+    const cmsHPROFILE outProfile = ICCStore::getInstance()->getProfile(icm.outputProfile);
+    Matrix3 outToXyz, xyzToOut, outToBt2020;
+
+    if (!profileMatrix(outProfile, outToXyz) || !invertMatrix(outToXyz, xyzToOut) || !conversionMatrix(outProfile, bt2020Profile(), outToBt2020)) {
+        return;
+    }
+
+    const std::array<double, 3> luma = profileLuma(outProfile);
+    const double paperwhite = icm.outputPaperwhiteNits;
+    const double maxNits = icm.outputMaxNits;
+
+    out.resize(static_cast<size_t>(cw) * ch * 3);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic, 16) if (multiThread)
+#endif
+
+    for (int i = 0; i < ch; ++i) {
+        const float* const rL = lab.L[cy + i];
+        const float* const ra = lab.a[cy + i];
+        const float* const rb = lab.b[cy + i];
+        float* const row = out.data() + static_cast<size_t>(i) * cw * 3;
+
+        for (int j = 0; j < cw; ++j) {
+            float fx, fy, fz;
+            Color::Lab2XYZ(rL[cx + j], ra[cx + j], rb[cx + j], fx, fy, fz);
+            const double xyz[3] = {fx / 65535.0, fy / 65535.0, fz / 65535.0};
+            double rgb[3];
+
+            for (int c = 0; c < 3; ++c) {
+                rgb[c] = xyzToOut[c][0] * xyz[0] + xyzToOut[c][1] * xyz[1] + xyzToOut[c][2] * xyz[2];
+            }
+
+            // Through the output's encoding and back, so the preview clips exactly where the export does
+            encode(*transfer, paperwhite, maxNits, luma.data(), rgb);
+            decode(*transfer, paperwhite, luma.data(), rgb);
+
+            for (int c = 0; c < 3; ++c) {
+                const double v = outToBt2020[c][0] * rgb[0] + outToBt2020[c][1] * rgb[1] + outToBt2020[c][2] * rgb[2];
+                row[3 * j + c] = static_cast<float>(rtengine::max(v, 0.0));
+            }
+        }
+    }
+}
+
 bool conversionMatrix(cmsHPROFILE from, cmsHPROFILE to, Matrix3& fromToTo)
 {
     Matrix3 fromToXyz, toToXyz, xyzToTo;

@@ -300,10 +300,48 @@ bool CropHandler::acceptUpdate(const PendingUpdate& pending) const
     return accept;
 }
 
+namespace
+{
+
+// Bilinear scaling of 3 channel float data, matching the geometry of Gdk::Pixbuf::scale with offset 0
+void scaleHdr(const std::vector<float>& src, int srcW, int srcH, float zoom, int dstW, int dstH, std::vector<float>& dst)
+{
+    dst.resize(static_cast<std::size_t>(dstW) * dstH * 3);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic, 16)
+#endif
+
+    for (int y = 0; y < dstH; ++y) {
+        const float sy = std::max(0.f, (y + 0.5f) / zoom - 0.5f);
+        const int y0 = std::min(static_cast<int>(sy), srcH - 1);
+        const int y1 = std::min(y0 + 1, srcH - 1);
+        const float fy = std::min(sy - y0, 1.f);
+
+        for (int x = 0; x < dstW; ++x) {
+            const float sx = std::max(0.f, (x + 0.5f) / zoom - 0.5f);
+            const int x0 = std::min(static_cast<int>(sx), srcW - 1);
+            const int x1 = std::min(x0 + 1, srcW - 1);
+            const float fx = std::min(sx - x0, 1.f);
+
+            for (int c = 0; c < 3; ++c) {
+                const float a = src[(static_cast<std::size_t>(y0) * srcW + x0) * 3 + c];
+                const float b = src[(static_cast<std::size_t>(y0) * srcW + x1) * 3 + c];
+                const float d = src[(static_cast<std::size_t>(y1) * srcW + x0) * 3 + c];
+                const float e = src[(static_cast<std::size_t>(y1) * srcW + x1) * 3 + c];
+                dst[(static_cast<std::size_t>(y) * dstW + x) * 3 + c] = (a + (b - a) * fx) * (1.f - fy) + (d + (e - d) * fx) * fy;
+            }
+        }
+    }
+}
+
+}
+
 void CropHandler::setDetailedCrop(
     IImage8* im,
     IImage8* imtrue,
     const std::vector<uint8_t>* hdrClipFlags,
+    const std::vector<float>* hdrPreview,
     const rtengine::procparams::ColorManagementParams& cmp,
     const rtengine::procparams::CropParams& cp,
     const rtengine::procparams::CropGuideParams& guideParams,
@@ -333,6 +371,7 @@ void CropHandler::setDetailedCrop(
     }
 
     cropimgflags.clear();
+    cropimghdr.clear();
 
     PendingUpdate received = {};
     received.x = ax;
@@ -357,6 +396,10 @@ void CropHandler::setDetailedCrop(
             }
         }
 
+        if (hdrPreview && hdrPreview->size() == cropimg_size) {
+            cropimghdr = *hdrPreview;
+        }
+
         pendingUpdate = received;
 
         bool expected = false;
@@ -370,11 +413,14 @@ void CropHandler::setDetailedCrop(
                     if (redraw_needed.exchange(false)) {
                         cropPixbuf.clear ();
                         cropPixbufHdrFlags.clear ();
+                        cropHdr.clear ();
+                        cropHdrWidth = cropHdrHeight = 0;
 
                         if (!enabled) {
                             cropimg.clear();
                             cropimgtrue.clear();
                             cropimgflags.clear();
+                            cropimghdr.clear();
                             cimg.unlock ();
                             return false;
                         }
@@ -412,11 +458,18 @@ void CropHandler::setDetailedCrop(
                                     cropPixbufHdrFlags = Gdk::Pixbuf::create (Gdk::COLORSPACE_RGB, false, 8, imw, imh);
                                     tmpPixbufFlags->scale (cropPixbufHdrFlags, 0, 0, imw, imh, 0, 0, czoom, czoom, Gdk::INTERP_NEAREST);
                                 }
+
+                                if (!cropimghdr.empty()) {
+                                    scaleHdr(cropimghdr, cropimg_width, cropimg_height, czoom, imw, imh, cropHdr);
+                                    cropHdrWidth = imw;
+                                    cropHdrHeight = imh;
+                                }
                             }
 
                             cropimg.clear();
                             cropimgtrue.clear();
                             cropimgflags.clear();
+                            cropimghdr.clear();
                         }
 
                         cimg.unlock ();

@@ -41,6 +41,7 @@ protected:
     Gtk::ToggleButton* indClippedS;
     Gtk::ToggleButton* indClippedSdr; // HDR output only: what exceeds SDR brightness (red) or the SDR gamut (blue)
     ImageArea* imageArea;
+    sigc::signal<void, bool> hdrModeChanged;
 
 public:
     explicit IndicateClippedPanel(ImageArea* ia);
@@ -54,6 +55,11 @@ public:
     void toggleClippedSdr();
     // Shows the SDR indicator only while the output is HDR, and turns it off otherwise
     void setHdrMode(bool hdr);
+    // Emitted with the new state whenever setHdrMode changes it
+    sigc::signal<void, bool>& signal_hdr_mode_changed()
+    {
+        return hdrModeChanged;
+    }
 
     sigc::connection connFocusMask, connSharpMask, connClippedS, connClippedH, connClippedSdr;
 

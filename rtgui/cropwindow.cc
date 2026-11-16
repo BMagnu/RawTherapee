@@ -20,6 +20,8 @@
 
 #include "cropwindow.h"
 
+#include <optional>
+
 #include "cursormanager.h"
 #include "drawcropguide.h"
 #include "guiutils.h"
@@ -1497,7 +1499,9 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
     auto& options = App::get().mut_options();
     options.bgcolor = backColor;
 
-    if (backColor == 0) {
+    if (hdrOverlayPass) {
+        // Transparent, so the HDR image shows through
+    } else if (backColor == 0) {
         hidpi::LogicalCoord offset = windowPos + imgAreaPos;
         style->render_background(cr, offset.x, offset.y, imgAreaSize.width, imgAreaSize.height);
     } else {
@@ -2003,6 +2007,30 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                     }
                 }
 
+                if (hdrOverlayPass) {
+                    // Only what the indicators changed covers the HDR image
+                    Glib::RefPtr<Gdk::Pixbuf> changed = tmp->add_alpha(false, 0, 0, 0);
+                    const guint8* const orig = cropHandler.cropPixbuf->get_pixels();
+                    const int origStride = cropHandler.cropPixbuf->get_rowstride();
+                    guint8* const dst = changed->get_pixels();
+                    const int dstStride = changed->get_rowstride();
+
+#ifdef _OPENMP
+                    #pragma omp parallel for schedule(dynamic,16)
+#endif
+
+                    for (int i = 0; i < bHeight; i++) {
+                        const guint8* o = orig + i * origStride;
+                        guint8* d = dst + i * dstStride;
+
+                        for (int j = 0; j < bWidth; j++, o += 3, d += 4) {
+                            d[3] = (d[0] != o[0] || d[1] != o[1] || d[2] != o[2]) ? 255 : 0;
+                        }
+                    }
+
+                    tmp = changed;
+                }
+
                 hidpi::LogicalCoord offset = windowPos + imgAreaPos + imgPos;
                 Gdk::Cairo::set_source_pixbuf(cr, tmp, offset.x, offset.y);
                 auto pattern = hidpi::getSourceForSurface(cr);
@@ -2015,7 +2043,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                               std::min(tmp->get_height() / deviceScale,
                                        imgAreaSize.height - imgPos.y));
                 cr->fill();
-            } else {
+            } else if (!hdrOverlayPass) {
                 hidpi::LogicalCoord offset = windowPos + imgAreaPos + imgPos;
                 Gdk::Cairo::set_source_pixbuf(cr, cropHandler.cropPixbuf, offset.x, offset.y);
                 auto pattern = hidpi::getSourceForSurface(cr);
@@ -2866,25 +2894,82 @@ void CropWindow::drawObservedFrame (const Cairo::RefPtr<Cairo::Context>& cr)
     cr->stroke ();
 }
 
+bool CropWindow::lockHdrImage (int& x, int& y, int& width, int& height, const float*& hdr, int& stride, double& paperwhiteNits, double& maxNits)
+{
+    if (state == SCropImgMove || state == SCropWinResize) {
+        // Showing the rough preview, the detailed crop doesn't match what's on screen
+        return false;
+    }
+
+    cropHandler.cimg.lock();
+
+    const bool haveImage =
+        cropHandler.cropPixbuf
+        && !cropHandler.cropHdr.empty()
+        && cropHandler.cropHdrWidth == cropHandler.cropPixbuf->get_width()
+        && cropHandler.cropHdrHeight == cropHandler.cropPixbuf->get_height();
+
+    if (!haveImage) {
+        cropHandler.cimg.unlock();
+        return false;
+    }
+
+    const int deviceScale = RTScalable::getScaleForWidget(iarea);
+    const hidpi::LogicalCoord offset = windowPos + imgAreaPos + imgPos;
+    x = offset.x;
+    y = offset.y;
+    // Contained within the crop window, like the SDR blit
+    width = std::min(cropHandler.cropHdrWidth, (imgAreaSize.width - imgPos.x) * deviceScale);
+    height = std::min(cropHandler.cropHdrHeight, (imgAreaSize.height - imgPos.y) * deviceScale);
+    hdr = cropHandler.cropHdr.data();
+    stride = cropHandler.cropHdrWidth * 3;
+    paperwhiteNits = cropHandler.colorParams->outputPaperwhiteNits;
+    maxNits = cropHandler.colorParams->outputMaxNits;
+
+    if (width <= 0 || height <= 0) {
+        cropHandler.cimg.unlock();
+        return false;
+    }
+
+    return true;
+}
+
+void CropWindow::unlockHdrImage ()
+{
+    cropHandler.cimg.unlock();
+}
+
 void CropWindow::cropImageUpdated ()
 {
-    MyMutex::MyLock lock(cropHandler.cimg);
+    // Whether the output is HDR, as far as the main crop of the image area owning the indicator panel tells.
+    // Only an update that delivered an image tells anything: the ones rejected while the view changes (zoom,
+    // scale changes when moving between screens, ...) carry no flags but say nothing about the output.
+    std::optional<bool> hdrOutput;
 
-    // The main crop of the image area owning the indicator panel decides whether the output is HDR
-    if (this == iarea->mainCropWindow && iarea->indClippedPanel && iarea->indClippedPanel->getImageArea() == iarea) {
-        iarea->indClippedPanel->setHdrMode(static_cast<bool>(cropHandler.cropPixbufHdrFlags));
+    {
+        MyMutex::MyLock lock(cropHandler.cimg);
+
+        if (cropHandler.cropPixbuf && this == iarea->mainCropWindow && iarea->indClippedPanel && iarea->indClippedPanel->getImageArea() == iarea) {
+            hdrOutput = static_cast<bool>(cropHandler.cropPixbufHdrFlags);
+        }
+
+        for (auto colorPicker : colorPickers) {
+            Coord imgPos, cropPos;
+            colorPicker->getImagePosition(imgPos);
+            imageCoordToCropImage(imgPos.x, imgPos.y, cropPos.x, cropPos.y);
+            float r=0.f, g=0.f, b=0.f;
+            float rpreview=0.f, gpreview=0.f, bpreview=0.f;
+            colorPicker->setValidity (checkValidity (colorPicker, cropPos));
+            cropHandler.colorPick(cropPos, r, g, b, rpreview, gpreview, bpreview, colorPicker->getSize());
+            colorPicker->setRGB (r, g, b, rpreview, gpreview, bpreview);
+        }
     }
 
-    for (auto colorPicker : colorPickers) {
-        Coord imgPos, cropPos;
-        colorPicker->getImagePosition(imgPos);
-        imageCoordToCropImage(imgPos.x, imgPos.y, cropPos.x, cropPos.y);
-        float r=0.f, g=0.f, b=0.f;
-        float rpreview=0.f, gpreview=0.f, bpreview=0.f;
-        colorPicker->setValidity (checkValidity (colorPicker, cropPos));
-        cropHandler.colorPick(cropPos, r, g, b, rpreview, gpreview, bpreview, colorPicker->getSize());
-        colorPicker->setRGB (r, g, b, rpreview, gpreview, bpreview);
+    // Outside of the crop lock: this reaches into the toolbar, the engine and the HDR display
+    if (hdrOutput) {
+        iarea->indClippedPanel->setHdrMode(*hdrOutput);
     }
+
     iarea->redraw ();
 }
 

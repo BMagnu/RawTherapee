@@ -19,6 +19,7 @@
  */
 #include "editorpanel.h"
 
+#include <functional>
 #include <iostream>
 
 #include "rtengine/array2D.h"
@@ -30,6 +31,7 @@
 #include "rtimage.h"
 #include "filepanel.h"
 #include "guiutils.h"
+#include "hdrdisplay.h"
 #include "options.h"
 #include "navigator.h"
 #include "previewwindow.h"
@@ -377,8 +379,11 @@ private:
     PopUpButton intentBox;
     Gtk::ToggleButton softProof;
     Gtk::ToggleButton spGamutCheck;
-    sigc::connection profileConn, intentConn, softproofConn;
+    // Only shown while the output is HDR and the display system can show HDR
+    Gtk::ToggleButton hdrPreview;
+    sigc::connection profileConn, intentConn, softproofConn, hdrPreviewConn;
     Glib::ustring defprof;
+    std::function<void(bool)> hdrPreviewListener;
 
     rtengine::StagedImageProcessor* const& processor;
 
@@ -447,6 +452,30 @@ private:
         spGamutCheck.set_active (false);
         spGamutCheck.set_sensitive (true);
         spGamutCheck.show ();
+
+        Gtk::Image *hdrPreviewImage = Gtk::manage (new RTImage ("hdr-preview", Gtk::ICON_SIZE_LARGE_TOOLBAR));
+        hdrPreviewImage->set_padding (0, 0);
+        hdrPreviewImage->show ();
+        hdrPreview.add (*hdrPreviewImage);
+        hdrPreview.set_relief (Gtk::RELIEF_NONE);
+        hdrPreview.set_tooltip_markup (M ("HDRPREVIEW_TOOLTIP"));
+        hdrPreview.set_active (false);
+        hdrPreview.set_no_show_all (true);
+        hdrPreview.hide ();
+    }
+
+    void hdrPreviewToggled ()
+    {
+        updateParameters ();
+
+        if (hdrPreviewListener) {
+            hdrPreviewListener (hdrPreviewEnabled ());
+        }
+    }
+
+    bool hdrPreviewEnabled () const
+    {
+        return hdrPreview.get_visible () && hdrPreview.get_active ();
     }
 
 #if !defined(__APPLE__)
@@ -568,6 +597,7 @@ private:
 
         processor->setMonitorProfile (profile, intent);
         processor->setSoftProofing (softProof.get_sensitive() && softProof.get_active(), spGamutCheck.get_sensitive() && spGamutCheck.get_active());
+        processor->setHdrPreview (hdrPreviewEnabled ());
 
         if (!noEvent) {
             processor->endUpdateParams (rtengine::EvMonitorTransform);
@@ -620,6 +650,7 @@ public:
 
         softproofConn = softProof.signal_toggled().connect (sigc::mem_fun (this, &ColorManagementToolbar::softProofToggled));
         spGamutCheck.signal_toggled().connect (sigc::mem_fun (this, &ColorManagementToolbar::spGamutCheckToggled));
+        hdrPreviewConn = hdrPreview.signal_toggled().connect (sigc::mem_fun (this, &ColorManagementToolbar::hdrPreviewToggled));
 #if !defined(__APPLE__) // monitor profile not supported on apple
         profileConn = profileBox.signal_changed ().connect (sigc::mem_fun (this, &ColorManagementToolbar::profileBoxChanged));
 #endif
@@ -634,6 +665,30 @@ public:
         grid->attach_next_to (*intentBox.buttonGroup, Gtk::POS_RIGHT, 1, 1);
         grid->attach_next_to (softProof, Gtk::POS_RIGHT, 1, 1);
         grid->attach_next_to (spGamutCheck, Gtk::POS_RIGHT, 1, 1);
+        grid->attach_next_to (hdrPreview, Gtk::POS_RIGHT, 1, 1);
+    }
+
+    // Called with whether the HDR preview is to be shown, whenever that changes
+    void setHdrPreviewListener (std::function<void(bool)> listener)
+    {
+        hdrPreviewListener = std::move (listener);
+    }
+
+    // The HDR preview is only offered while the output is HDR and the display system can show it
+    void setHdrOutput (bool hdr)
+    {
+        const bool offer = hdr && HdrDisplay::available ();
+
+        if (offer == hdrPreview.get_visible ()) {
+            return;
+        }
+
+        const bool wasEnabled = hdrPreviewEnabled ();
+        hdrPreview.set_visible (offer);
+
+        if (wasEnabled != hdrPreviewEnabled ()) {
+            hdrPreviewToggled ();
+        }
     }
 
     void updateProcessor()
@@ -995,6 +1050,13 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     // Color management toolbar
     colorMgmtToolBar.reset (new ColorManagementToolbar (ipc));
     colorMgmtToolBar->pack_right_in (iops);
+    colorMgmtToolBar->setHdrPreviewListener ([this](bool enabled) {
+        iareapanel->imageArea->setHdrPreview (enabled);
+    });
+    // The main crop knows whether the output is HDR, and tells the indicator panel
+    iareapanel->imageArea->indClippedPanel->signal_hdr_mode_changed().connect ([this](bool hdr) {
+        colorMgmtToolBar->setHdrOutput (hdr);
+    });
 
     if (!App::get().isSimpleEditor() && !options.tabbedUI) {
         Gtk::Separator* vsep3 = Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));

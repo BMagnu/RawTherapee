@@ -265,11 +265,14 @@ public:
     virtual ~DetailedCropListener() = default;
     /** With this member function the staged processor notifies the listener that the detailed crop image has been updated.
       * @param img is a pointer to the detailed crop image
-      * @param hdrClipFlags for HDR output, one hdr::HdrClipFlag set per pixel of img, row by row; nullptr otherwise */
+      * @param hdrClipFlags for HDR output, one hdr::HdrClipFlag set per pixel of img, row by row; nullptr otherwise
+      * @param hdrPreview while the HDR preview is enabled and the output is HDR, the image as linear BT.2020
+      *        light relative to paper white (3 floats per pixel of img, row by row); nullptr otherwise */
     virtual void setDetailedCrop(
         IImage8* img,
         IImage8* imgtrue,
         const std::vector<uint8_t>* hdrClipFlags,
+        const std::vector<float>* hdrPreview,
         const procparams::ColorManagementParams& cmp,
         const procparams::CropParams& cp,
         const procparams::CropGuideParams& guideParams,
@@ -839,6 +842,8 @@ public:
     virtual void        getMonitorProfile       (Glib::ustring& monitorProfile, RenderingIntent& intent) const = 0;
     virtual void        setSoftProofing         (bool softProof, bool gamutCheck) = 0;
     virtual void        getSoftProofing         (bool &softProof, bool &gamutCheck) = 0;
+    /** Whether the detailed crops also deliver the image as HDR light, for an HDR capable display */
+    virtual void        setHdrPreview           (bool enabled) = 0;
     virtual ProcEvent   setSharpMask            (bool sharpMask) = 0;
 
     virtual ~StagedImageProcessor () {}

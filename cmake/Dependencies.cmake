@@ -83,6 +83,7 @@ macro(rt_setup_dependencies)
     endif()
 
     rt_setup_jxl()
+    rt_setup_wayland_hdr()
 
     if(WITH_SYSTEM_FMT)
         find_package(FMT REQUIRED)
@@ -231,6 +232,37 @@ macro(rt_setup_jxl)
             target_compile_definitions(PkgConfig::JXL INTERFACE "LIBJXL")
         else()
             set(JXL_VERSION "Disabled, Auto")
+        endif()
+    endif()
+endmacro()
+
+# HDR preview through a Wayland subsurface described with wp_color_management_v1.
+# TODO: other platforms (Windows: DXGI scRGB / HDR10 swap chain, macOS: EDR via CAMetalLayer).
+macro(rt_setup_wayland_hdr)
+    set(WAYLAND_HDR_FOUND FALSE)
+
+    if(WIN32 OR APPLE OR NOT (WITH_WAYLAND_HDR OR WITH_WAYLAND_HDR STREQUAL "AUTO"))
+        set(WAYLAND_HDR_VERSION "Disabled")
+    else()
+        if(NOT WITH_WAYLAND_HDR STREQUAL "AUTO")
+            set(WAYLAND_HDR_REQUIRED "REQUIRED")
+        else()
+            set(WAYLAND_HDR_REQUIRED "")
+        endif()
+
+        pkg_check_modules(WAYLAND_CLIENT ${WAYLAND_HDR_REQUIRED} IMPORTED_TARGET wayland-client)
+        # The staging color-management-v1 protocol appeared in 1.41
+        pkg_check_modules(WAYLAND_PROTOCOLS ${WAYLAND_HDR_REQUIRED} wayland-protocols>=1.41)
+        pkg_check_modules(WAYLAND_SCANNER ${WAYLAND_HDR_REQUIRED} wayland-scanner)
+        pkg_check_modules(GTK_WAYLAND ${WAYLAND_HDR_REQUIRED} gtk+-wayland-3.0)
+
+        if(WAYLAND_CLIENT_FOUND AND WAYLAND_PROTOCOLS_FOUND AND WAYLAND_SCANNER_FOUND AND GTK_WAYLAND_FOUND)
+            pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
+            pkg_get_variable(WAYLAND_SCANNER_EXECUTABLE wayland-scanner wayland_scanner)
+            set(WAYLAND_HDR_FOUND TRUE)
+            set(WAYLAND_HDR_VERSION "wayland-client ${WAYLAND_CLIENT_VERSION}, wayland-protocols ${WAYLAND_PROTOCOLS_VERSION}")
+        elseif(WITH_WAYLAND_HDR STREQUAL "AUTO")
+            set(WAYLAND_HDR_VERSION "Disabled, Auto")
         endif()
     endif()
 endmacro()
