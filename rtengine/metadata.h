@@ -54,6 +54,9 @@ public:
     void setIptc(const rtengine::procparams::IPTCPairs& iptc);
     
     void saveToImage(const Glib::ustring& path, bool preserve_all_tags) const;
+    // What saveToImage writes, encoded: Exif as a TIFF structure, XMP as a packet (IPTC included). Empty
+    // when there is none of either. For image formats Exiv2 can't write to.
+    void getOutputMetadataBlobs(bool preserve_all_tags, std::string& exif, std::string& xmp) const;
     void saveToXmp(const Glib::ustring& path) const;
 
     void setExifKeys(const std::vector<std::string> *keys);
@@ -70,6 +73,7 @@ public:
    
 private:
     void do_merge_xmp(Exiv2::Image* dst, bool keep_all) const;
+    void fillOutputMetadata(Exiv2::Image* dst, bool preserve_all_tags) const;
     void import_exif_pairs(Exiv2::ExifData& out) const;
     void import_iptc_pairs(Exiv2::IptcData& out) const;
     void remove_unwanted(Exiv2::ExifData& dst) const;

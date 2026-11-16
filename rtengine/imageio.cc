@@ -1715,7 +1715,7 @@ int ImageIO::buildAvifGainMap(void* opaqueImage, int bps, int quality, TransferF
 
     if (transfer == TransferFunction::PQ) {
         const double maxPALL = sumFrameLight / (static_cast<double>(width) * height);
-        gainMap->altCLLI.maxCLL = static_cast<uint16_t>(LIM(peak * paperwhite + 0.5, 0.0, 65535.0));
+        gainMap->altCLLI.maxCLL = static_cast<uint16_t>(LIM(std::ceil(peak * paperwhite), 0.0, 65535.0));
         gainMap->altCLLI.maxPALL = static_cast<uint16_t>(LIM(maxPALL * paperwhite + 0.5, 0.0, 65535.0));
     }
 
@@ -1834,7 +1834,7 @@ int ImageIO::saveAVIF (const Glib::ustring &fname, int bps, int quality, bool ga
             }
 
             const int maxSample = (1 << scanlineBps) - 1;
-            double maxCLL = 0.0;
+            int maxPeakSample = 0;
             double sumFrameLight = 0.0;
 
             for (int i = 0; i < height; ++i) {
@@ -1849,19 +1849,42 @@ int ImageIO::saveAVIF (const Glib::ustring &fname, int bps, int quality, bool ga
                         peak = std::max(peak, sample);
                     }
 
-                    const double light = pqLut[peak * (lutSize - 1) / maxSample];
-                    maxCLL = std::max(maxCLL, light);
-                    sumFrameLight += light;
+                    maxPeakSample = std::max(maxPeakSample, peak);
+                    sumFrameLight += pqLut[peak * (lutSize - 1) / maxSample];
                 }
             }
 
+            // maxCLL is an upper bound, so evaluate the brightest sample exactly (and round up) rather than
+            // through the table, which rounds down
+            const double maxCLL = Color::pq_eotf(static_cast<double>(maxPeakSample) / maxSample) * 10000.0;
             const double maxPALL = sumFrameLight / (static_cast<double>(width) * height);
-            image->clli.maxCLL = static_cast<uint16_t>(LIM(maxCLL + 0.5, 0.0, 65535.0));
+            image->clli.maxCLL = static_cast<uint16_t>(LIM(std::ceil(maxCLL), 0.0, 65535.0));
             image->clli.maxPALL = static_cast<uint16_t>(LIM(maxPALL + 0.5, 0.0, 65535.0));
         }
 
         if (avifImageRGBToYUV (image.get(), &rgb) != AVIF_RESULT_OK) {
             return IMIO_CANNOTWRITEFILE;
+        }
+    }
+
+    // Exiv2 can't write into AVIF files, so the metadata goes in through libavif
+    if (!metadataInfo.filename().empty()) {
+        try {
+            metadataInfo.load();
+            std::string exif, xmp;
+            metadataInfo.getOutputMetadataBlobs(false, exif, xmp);
+
+            if (!exif.empty() && avifImageSetMetadataExif(image.get(), reinterpret_cast<const uint8_t*>(exif.data()), exif.size()) != AVIF_RESULT_OK) {
+                std::cerr << "AVIF: could not store the Exif metadata" << std::endl;
+            }
+
+            if (!xmp.empty() && avifImageSetMetadataXMP(image.get(), reinterpret_cast<const uint8_t*>(xmp.data()), xmp.size()) != AVIF_RESULT_OK) {
+                std::cerr << "AVIF: could not store the XMP metadata" << std::endl;
+            }
+        } catch (const std::exception& exc) {
+            if (settings->verbose) {
+                std::cout << "EXIF ERROR: " << exc.what() << std::endl;
+            }
         }
     }
 
@@ -1898,14 +1921,11 @@ int ImageIO::saveAVIF (const Glib::ustring &fname, int bps, int quality, bool ga
     const size_t expected = output.size;
     const size_t written = fwrite (output.data, 1, expected, file);
     avifRWDataFree (&output);
+    // Always close, also after a short write, so the file is released and can be removed
+    const bool closeFailed = fclose (file) != 0;
 
-    if (written != expected || fclose (file) != 0) {
+    if (written != expected || closeFailed) {
         g_remove (fname.c_str());
-        return IMIO_CANNOTWRITEFILE;
-    }
-
-    if (!saveMetadata(fname)) {
-        g_remove(fname.c_str());
         return IMIO_CANNOTWRITEFILE;
     }
 

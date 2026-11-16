@@ -118,6 +118,8 @@ public:
 
     // widget base events
     void on_realize () override;
+    void on_unmap () override;
+    void on_unrealize () override;
     bool on_draw                 (const ::Cairo::RefPtr< Cairo::Context> &cr) override;
     bool on_motion_notify_event  (GdkEventMotion* event) override;
     bool on_button_press_event   (GdkEventButton* event) override;

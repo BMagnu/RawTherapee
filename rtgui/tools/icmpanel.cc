@@ -892,6 +892,13 @@ void ICMPanel::neutral_pressed ()
 
 void ICMPanel::updateAbsoluteLuminance(const Glib::ustring &profile)
 {
+    if (batchMode && profile == M("GENERAL_UNCHANGED")) {
+        // The images edited together may have any output profile, so offer everything
+        oNitsBox->set_visible(true);
+        oMaxNits->set_visible(true);
+        return;
+    }
+
     const std::optional<rtengine::TransferFunction> transfer =
         rtengine::unexpressibleTransferFunction(rtengine::ICCStore::getInstance()->getProfile(profile));
 
@@ -1393,6 +1400,7 @@ void ICMPanel::read(const ProcParams* pp, const ParamsEdited* pedited)
 
         if (!pedited->icm.outputProfile) {
             oProfNames->set_active_text(M("GENERAL_UNCHANGED"));
+            updateAbsoluteLuminance(oProfNames->get_active_text());
         }
 
         if (!pedited->icm.outputSdrBaseProfile) {
@@ -2985,8 +2993,10 @@ void ICMPanel::opChanged()
 {
     if (!batchMode) {
         updateRenderingIntent(oProfNames->get_active_text());
-        updateAbsoluteLuminance(oProfNames->get_active_text());
     }
+
+    // Also in batch mode, or HDR settings couldn't be made after picking an HDR profile there
+    updateAbsoluteLuminance(oProfNames->get_active_text());
 
     if (listener) {
         listener->panelChanged(EvOProfile, oProfNames->get_active_text());

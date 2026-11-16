@@ -65,6 +65,10 @@ public:
     // Stops showing anything, leaving the GTK rendering underneath visible.
     void hide();
 
+    // Like hide(), but also lets go of all Wayland objects, effective immediately. For when the anchor
+    // widget is unmapped or unrealized, as GTK may destroy the toplevel's surface or stop committing it.
+    void release();
+
 private:
     struct Implementation;
     std::unique_ptr<Implementation> implementation;

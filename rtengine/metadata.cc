@@ -274,14 +274,13 @@ void Exiv2Metadata::do_merge_xmp(Exiv2::Image *dst, bool keep_all) const
 }
 
 
-void Exiv2Metadata::saveToImage(const Glib::ustring &path, bool preserve_all_tags) const
+void Exiv2Metadata::fillOutputMetadata(Exiv2::Image* dst, bool preserve_all_tags) const
 {
-    auto dst = open_exiv2(path, false);
     if (image_.get()) {
         dst->setIptcData(image_->iptcData());
         dst->setXmpData(image_->xmpData());
         if (merge_xmp_) {
-            do_merge_xmp(dst.get(), preserve_all_tags);
+            do_merge_xmp(dst, preserve_all_tags);
         }
         auto srcexif = image_->exifData();
         if (!preserve_all_tags) {
@@ -309,6 +308,14 @@ void Exiv2Metadata::saveToImage(const Glib::ustring &path, bool preserve_all_tag
     
     import_exif_pairs(dst->exifData());
     import_iptc_pairs(dst->iptcData());
+}
+
+
+void Exiv2Metadata::saveToImage(const Glib::ustring &path, bool preserve_all_tags) const
+{
+    auto dst = open_exiv2(path, false);
+    fillOutputMetadata(dst.get(), preserve_all_tags);
+
     bool xmp_tried = false;
     bool iptc_tried = false;
     for (int i = 0; i < 3; ++i) {
@@ -337,6 +344,34 @@ void Exiv2Metadata::saveToImage(const Glib::ustring &path, bool preserve_all_tag
                 throw exc;
             }
         }
+    }
+}
+
+
+void Exiv2Metadata::getOutputMetadataBlobs(bool preserve_all_tags, std::string &exif, std::string &xmp) const
+{
+    // The same metadata saveToImage writes, assembled in a memory image, for formats Exiv2 can't write
+    // (AVIF). These have no place for IPTC, so it goes into XMP, which is where it maps to anyway.
+    auto image = Exiv2::ImageFactory::create(Exiv2::ImageType::xmp);
+    fillOutputMetadata(image.get(), preserve_all_tags);
+
+    exif.clear();
+    xmp.clear();
+
+    if (!image->exifData().empty()) {
+        Exiv2::Blob blob;
+        Exiv2::ExifParser::encode(blob, Exiv2::littleEndian, image->exifData());
+        exif.assign(blob.begin(), blob.end());
+    }
+
+    Exiv2::XmpData xmpData = image->xmpData();
+
+    if (!image->iptcData().empty()) {
+        Exiv2::copyIptcToXmp(image->iptcData(), xmpData);
+    }
+
+    if (!xmpData.empty() && Exiv2::XmpParser::encode(xmp, xmpData) != 0) {
+        xmp.clear();
     }
 }
 

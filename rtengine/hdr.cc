@@ -247,6 +247,10 @@ void computeClipFlags(const LabImage& lab, int cx, int cy, int cw, int ch, const
     // Relative to paper white, with a little tolerance so values that encode exactly at the
     // ceiling, or exactly at paper white, don't flicker in and out of the indicators
     const double peak = peakNits(*transfer, icm.outputMaxNits) / paperwhite * 0.999;
+    // HLG clips each channel in scene light, after the inverse OOTF on luminance, so saturated colours clip
+    // well below the nominal peak (a pure red at about 765 cd/m2): ask the encoding itself
+    const bool hlg = *transfer == TransferFunction::HLG;
+    const std::array<double, 3> outLuma = profileLuma(store->getProfile(icm.outputProfile));
     constexpr double sdrWhite = 1.0 + 1e-4;
     constexpr double gamutTolerance = 1e-4;
 
@@ -275,7 +279,17 @@ void computeClipFlags(const LabImage& lab, int cx, int cy, int cw, int ch, const
                 out[c] = xyzToOut[c][0] * xyz[0] + xyzToOut[c][1] * xyz[1] + xyzToOut[c][2] * xyz[2];
             }
 
-            if (rtengine::max(out[0], out[1], out[2]) >= peak) {
+            bool abovePeak;
+
+            if (hlg) {
+                double encoded[3] = {out[0], out[1], out[2]};
+                encode(*transfer, paperwhite, icm.outputMaxNits, outLuma.data(), encoded);
+                abovePeak = rtengine::max(encoded[0], encoded[1], encoded[2]) >= 0.9999;
+            } else {
+                abovePeak = rtengine::max(out[0], out[1], out[2]) >= peak;
+            }
+
+            if (abovePeak) {
                 f |= HDR_CLIP_ABOVE_PEAK;
             }
 

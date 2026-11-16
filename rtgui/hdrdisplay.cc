@@ -299,6 +299,7 @@ struct HdrDisplay::Implementation {
     wp_color_management_surface_v1* colorSurface = nullptr;
     wp_image_description_v1* description = nullptr;
     DescriptionState descriptionState = DescriptionState::PENDING;
+    bool descriptionApplied = false;
     double descriptionPaperwhite = 0.0;
     double descriptionMaxNits = 0.0;
     std::vector<std::unique_ptr<ShmBuffer>> buffers;
@@ -330,6 +331,8 @@ struct HdrDisplay::Implementation {
             wp_image_description_v1_destroy(description);
             description = nullptr;
         }
+
+        descriptionApplied = false;
 
         if (colorSurface) {
             wp_color_management_surface_v1_destroy(colorSurface);
@@ -397,7 +400,8 @@ struct HdrDisplay::Implementation {
     bool ensureDescription(double paperwhite, double maxNits)
     {
         if (description && descriptionPaperwhite == paperwhite && descriptionMaxNits == maxNits) {
-            return descriptionState == DescriptionState::READY;
+            // It may have become ready only after we stopped waiting for it
+            return applyDescription();
         }
 
         if (description) {
@@ -423,6 +427,7 @@ struct HdrDisplay::Implementation {
 
         description = wp_image_description_creator_params_v1_create(creator);
         descriptionState = DescriptionState::PENDING;
+        descriptionApplied = false;
         descriptionPaperwhite = paperwhite;
         descriptionMaxNits = maxNits;
         wp_image_description_v1_add_listener(description, &descriptionListener, &descriptionState);
@@ -434,11 +439,20 @@ struct HdrDisplay::Implementation {
             }
         }
 
+        return applyDescription();
+    }
+
+    bool applyDescription()
+    {
         if (descriptionState != DescriptionState::READY) {
             return false;
         }
 
-        wp_color_management_surface_v1_set_image_description(colorSurface, description, WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL);
+        if (!descriptionApplied) {
+            wp_color_management_surface_v1_set_image_description(colorSurface, description, WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL);
+            descriptionApplied = true;
+        }
+
         return true;
     }
 
@@ -537,6 +551,17 @@ void HdrDisplay::present(
     }
 
     deviceScale = std::max(deviceScale, 1);
+
+    // The buffer size must be a multiple of the buffer scale, or the compositor kills the connection
+    // (wl_surface error invalid_size). Drop the odd device pixel at the edge rather than that.
+    width -= width % deviceScale;
+    height -= height % deviceScale;
+
+    if (width <= 0 || height <= 0) {
+        hide();
+        return;
+    }
+
     wl_display_dispatch_queue_pending(impl.globals->display, impl.globals->queue);
 
     int offsetX = 0, offsetY = 0;
@@ -646,6 +671,12 @@ void HdrDisplay::hide()
     impl.mapped = false;
 }
 
+void HdrDisplay::release()
+{
+    // Destroying the subsurface takes it off screen right away, without waiting for a parent commit
+    implementation->destroySurface();
+}
+
 #else // RT_WAYLAND_HDR
 
 struct HdrDisplay::Implementation {
@@ -667,6 +698,10 @@ void HdrDisplay::present(int, int, int, int, int, const float*, int, const Cairo
 }
 
 void HdrDisplay::hide()
+{
+}
+
+void HdrDisplay::release()
 {
 }
 

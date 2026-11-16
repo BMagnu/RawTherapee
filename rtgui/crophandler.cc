@@ -18,6 +18,7 @@
  */
 #include "crophandler.h"
 
+#include <algorithm>
 #include <cstring>
 #include "guiutils.h"
 #include "cropwindow.h"
@@ -303,10 +304,33 @@ bool CropHandler::acceptUpdate(const PendingUpdate& pending) const
 namespace
 {
 
-// Bilinear scaling of 3 channel float data, matching the geometry of Gdk::Pixbuf::scale with offset 0
+// Scaling of 3 channel float data, matching Gdk::Pixbuf::scale with INTERP_TILES and offset 0, like the
+// 8 bit images it is shown alongside: nearest neighbour when enlarging, so pixels stay sharp and line up
+// with the clipping indicators, and bilinear when reducing.
 void scaleHdr(const std::vector<float>& src, int srcW, int srcH, float zoom, int dstW, int dstH, std::vector<float>& dst)
 {
     dst.resize(static_cast<std::size_t>(dstW) * dstH * 3);
+
+    if (zoom >= 1.f) {
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(dynamic, 16)
+#endif
+
+        for (int y = 0; y < dstH; ++y) {
+            const int sy = std::min(static_cast<int>(y / zoom), srcH - 1);
+
+            for (int x = 0; x < dstW; ++x) {
+                const int sx = std::min(static_cast<int>(x / zoom), srcW - 1);
+                const float* const in = &src[(static_cast<std::size_t>(sy) * srcW + sx) * 3];
+                float* const out = &dst[(static_cast<std::size_t>(y) * dstW + x) * 3];
+                out[0] = in[0];
+                out[1] = in[1];
+                out[2] = in[2];
+            }
+        }
+
+        return;
+    }
 
 #ifdef _OPENMP
     #pragma omp parallel for schedule(dynamic, 16)

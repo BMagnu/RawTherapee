@@ -657,6 +657,12 @@ int processLineParams ( int argc, char **argv )
         return -3;
     }
 
+    if (outputType != "avif" && (bits == 10 || bits == 12)) {
+        std::cerr << "Error: -b10 and -b12 are only supported for AVIF output." << std::endl;
+        deleteProcParams (processingParams);
+        return -3;
+    }
+
     if ( !App::get().argv1().empty() ) {
         return 1;
     }

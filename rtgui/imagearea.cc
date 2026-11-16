@@ -289,6 +289,26 @@ bool ImageArea::on_draw(const ::Cairo::RefPtr< Cairo::Context> &cr)
     return true;
 }
 
+void ImageArea::on_unmap ()
+{
+    // The HDR surface belongs to the toplevel, and would stay on screen over whatever replaces this widget
+    // (another editor tab, the file browser, ...)
+    if (hdrDisplay) {
+        hdrDisplay->release();
+    }
+
+    Gtk::DrawingArea::on_unmap();
+}
+
+void ImageArea::on_unrealize ()
+{
+    if (hdrDisplay) {
+        hdrDisplay->release();
+    }
+
+    Gtk::DrawingArea::on_unrealize();
+}
+
 void ImageArea::setHdrPreview (bool enabled)
 {
     if (enabled && !hdrDisplay && HdrDisplay::available()) {
