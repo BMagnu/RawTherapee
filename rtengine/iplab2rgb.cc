@@ -259,6 +259,7 @@ Image8* ImProcFunctions::lab2rgb(LabImage* lab, int cx, int cy, int cw, int ch, 
     Glib::ustring profile;
 
     cmsHPROFILE oprof = nullptr;
+    bool ownsProfile = false;
     int pro = 0;//int pro to switch to Working Profile histogram mode without gamma
     if (settings->HistogramWorking && consider_histogram_settings) {
         profile = icm.workingProfile;
@@ -270,7 +271,16 @@ Image8* ImProcFunctions::lab2rgb(LabImage* lab, int cx, int cy, int cw, int ch, 
             profile = "sRGB";
         }
 
-        oprof = ICCStore::getInstance()->getProfile(profile);
+        if (hdr::isHdrOutput(icm)) {
+            // The stored HDR curves clamp at paper white when inverted, so use the same analytic
+            // curves as the export, for the histogram and pickers to see the actual HDR values.
+            oprof = ICCStore::getInstance()->createOutputProfile(icm);
+            ownsProfile = oprof != nullptr;
+        }
+
+        if (!oprof) {
+            oprof = ICCStore::getInstance()->getProfile(profile);
+        }
     }
 
     if (oprof) {
@@ -319,6 +329,9 @@ Image8* ImProcFunctions::lab2rgb(LabImage* lab, int cx, int cy, int cw, int ch, 
 
         cmsDeleteTransform(hTransform);
 
+        if (ownsProfile) {
+            cmsCloseProfile(oprof);
+        }
     } else {
         const auto xyz_rgb = ICCStore::getInstance()->workingSpaceInverseMatrix(profile);
         copyAndClamp(lab, image->data, xyz_rgb, multiThread, pro);//int pro = 1 to switch to Working Profile for histogram and navigator panel and Lockable color picker whitout gamma

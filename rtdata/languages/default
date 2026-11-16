@@ -1959,6 +1959,7 @@ MAIN_TOOLTIP_BEFOREAFTERLOCK;<b>Lock</b> / <b>Unlock</b> the <b>Before</b> view\
 MAIN_TOOLTIP_HIDEHP;Show/Hide the left panel (including the history).\nShortcut: <b>l</b>
 MAIN_TOOLTIP_INDCLIPPEDH;Clipped highlight indication.\nShortcut: <b>&gt;</b>
 MAIN_TOOLTIP_INDCLIPPEDS;Clipped shadow indication.\nShortcut: <b>&lt;</b>
+MAIN_TOOLTIP_INDCLIPPEDSDR;SDR exceedance indication, only available with an HDR output profile.\n<span foreground="#ff4040">Red</span>: brighter than paper white, so it can't be shown in SDR.\n<span foreground="#6080ff">Blue</span>: within SDR brightness, but outside the gamut of the SDR base profile.\nWith HDR output, the clipped highlight indication marks what exceeds the maximum luminance of the output instead.\nShortcut: <b>?</b>
 MAIN_TOOLTIP_PREVIEWB;Preview the <b>blue channel</b>.\nShortcut: <b>b</b>
 MAIN_TOOLTIP_PREVIEWFOCUSMASK;Preview the <b>focus mask</b>.\nShortcut: <b>Shift-f</b>\n\nMore accurate on images with shallow depth of field, low noise and at higher zoom levels.\nZoom out to 10-30% to improve detection accuracy on noisy images.
 MAIN_TOOLTIP_PREVIEWG;Preview the <b>green channel</b>.\nShortcut: <b>g</b>

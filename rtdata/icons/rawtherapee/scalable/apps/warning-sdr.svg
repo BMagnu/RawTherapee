@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Based on warning-highlights.svg by Maciej Dworak, CC BY-SA 4.0 -->
+<svg
+   width="24px"
+   height="24px"
+   viewBox="0 0 24 24"
+   version="1.1"
+   id="SVGRoot"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs815">
+    <clipPath
+       id="triangleClip">
+      <path
+         d="M 12,3 22.392305,21 1.6076952,21 Z" />
+    </clipPath>
+  </defs>
+  <g
+     id="layer1">
+    <!-- Left half red (beyond SDR brightness), right half blue (outside the SDR gamut) -->
+    <g
+       clip-path="url(#triangleClip)"
+       style="opacity:0.8">
+      <rect
+         x="0"
+         y="0"
+         width="12"
+         height="24"
+         style="fill:#e02020;stroke:none" />
+      <rect
+         x="12"
+         y="0"
+         width="12"
+         height="24"
+         style="fill:#2050e0;stroke:none" />
+    </g>
+    <path
+       style="opacity:0.7;fill:none;stroke:#cccccc;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1.0"
+       id="path851"
+       d="M 12,3 22.392305,21 1.6076952,21 Z" />
+    <path
+       id="path4562-5"
+       d="m 13.207467,10.82925 c 0,2.185129 -0.540947,5.087874 -1.207468,5.087874 -0.666523,0 -1.207467,-2.902745 -1.207467,-5.087874 0,-2.1851257 0.540944,-2.8292503 1.207467,-2.8292503 0.666521,0 1.207468,0.6441246 1.207468,2.8292503 z"
+       style="opacity:0.9;fill:#ffffff;fill-opacity:1.0;fill-rule:nonzero;stroke:none" />
+    <ellipse
+       ry="1.2399021"
+       rx="1.2388306"
+       cy="17.753935"
+       cx="12"
+       id="path4565-0"
+       style="opacity:0.9;fill:#ffffff;fill-opacity:1.0;fill-rule:nonzero;stroke:none" />
+  </g>
+</svg>

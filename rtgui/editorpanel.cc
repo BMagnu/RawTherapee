@@ -1883,6 +1883,10 @@ bool EditorPanel::handleShortcutKey (GdkEventKey* event)
                     iareapanel->imageArea->indClippedPanel->toggleClipped (true);
                     return true;
 
+                case GDK_KEY_question:
+                    iareapanel->imageArea->indClippedPanel->toggleClippedSdr ();
+                    return true;
+
                 case GDK_KEY_f:
                     iareapanel->imageArea->zoomPanel->zoomFitCropClicked();
                     return true;

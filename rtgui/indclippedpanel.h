@@ -39,6 +39,7 @@ protected:
     Gtk::ToggleButton* previewFocusMask;
     Gtk::ToggleButton* indClippedH;
     Gtk::ToggleButton* indClippedS;
+    Gtk::ToggleButton* indClippedSdr; // HDR output only: what exceeds SDR brightness (red) or the SDR gamut (blue)
     ImageArea* imageArea;
 
 public:
@@ -50,8 +51,16 @@ public:
     void toggleFocusMask();
     void silentlyDisableSharpMask();  // toggle the button off without throwing a toggle event
     void toggleSharpMask();
+    void toggleClippedSdr();
+    // Shows the SDR indicator only while the output is HDR, and turns it off otherwise
+    void setHdrMode(bool hdr);
 
-    sigc::connection connFocusMask, connSharpMask, connClippedS, connClippedH;
+    sigc::connection connFocusMask, connSharpMask, connClippedS, connClippedH, connClippedSdr;
+
+    const ImageArea* getImageArea() const
+    {
+        return imageArea;
+    }
 
 
     bool showFocusMask ()
@@ -65,5 +74,9 @@ public:
     bool showClippedHighlights()
     {
         return indClippedH->get_active();
+    }
+    bool showClippedSdr()
+    {
+        return indClippedSdr->get_visible() && indClippedSdr->get_active();
     }
 };

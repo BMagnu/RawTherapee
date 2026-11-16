@@ -65,6 +65,12 @@ IndicateClippedPanel::IndicateClippedPanel (ImageArea* ia) :
         indClippedS->set_tooltip_markup (tt);
     }
 
+    indClippedSdr = Gtk::manage (new Gtk::ToggleButton ());
+    indClippedSdr->set_relief(Gtk::RELIEF_NONE);
+    indClippedSdr->add (*Gtk::manage (new RTImage ("warning-sdr", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+    indClippedSdr->set_tooltip_markup (M("MAIN_TOOLTIP_INDCLIPPEDSDR"));
+    indClippedSdr->set_active (false);
+
     previewFocusMask->set_active (false);
     previewSharpMask->set_active (false);
     indClippedH->set_active (options.showClippedHighlights);
@@ -74,13 +80,40 @@ IndicateClippedPanel::IndicateClippedPanel (ImageArea* ia) :
     pack_start (*previewSharpMask, Gtk::PACK_SHRINK, 0);
     pack_start (*indClippedS, Gtk::PACK_SHRINK, 0);
     pack_start (*indClippedH, Gtk::PACK_SHRINK, 0);
+    pack_start (*indClippedSdr, Gtk::PACK_SHRINK, 0);
 
     connSharpMask = previewSharpMask->signal_toggled().connect( sigc::bind(sigc::mem_fun(*this, &IndicateClippedPanel::buttonToggled), previewSharpMask) );
     connFocusMask = previewFocusMask->signal_toggled().connect( sigc::bind(sigc::mem_fun(*this, &IndicateClippedPanel::buttonToggled), previewFocusMask) );
     connClippedS = indClippedS->signal_toggled().connect( sigc::bind(sigc::mem_fun(*this, &IndicateClippedPanel::buttonToggled), indClippedS) );
     connClippedH = indClippedH->signal_toggled().connect( sigc::bind(sigc::mem_fun(*this, &IndicateClippedPanel::buttonToggled), indClippedH) );
+    connClippedSdr = indClippedSdr->signal_toggled().connect( sigc::bind(sigc::mem_fun(*this, &IndicateClippedPanel::buttonToggled), indClippedSdr) );
 
     show_all ();
+
+    // Only meaningful for HDR output, see setHdrMode
+    indClippedSdr->set_no_show_all(true);
+    indClippedSdr->hide();
+}
+
+void IndicateClippedPanel::toggleClippedSdr ()
+{
+    if (indClippedSdr->get_visible()) {
+        indClippedSdr->set_active(!indClippedSdr->get_active());
+    }
+}
+
+void IndicateClippedPanel::setHdrMode (bool hdr)
+{
+    if (hdr == indClippedSdr->get_visible()) {
+        return;
+    }
+
+    if (!hdr && indClippedSdr->get_active()) {
+        // Goes through buttonToggled, which redraws
+        indClippedSdr->set_active(false);
+    }
+
+    indClippedSdr->set_visible(hdr);
 }
 
 // inverts a toggle programmatically
@@ -118,6 +151,7 @@ void IndicateClippedPanel::buttonToggled (Gtk::ToggleButton* tb)
     connSharpMask.block(true);
     connClippedS.block(true);
     connClippedH.block(true);
+    connClippedSdr.block(true);
 
     if (tb == previewFocusMask) {
         if (indClippedS->get_active()) {
@@ -126,6 +160,9 @@ void IndicateClippedPanel::buttonToggled (Gtk::ToggleButton* tb)
         if (indClippedH->get_active()) {
             indClippedH->set_active(false);
         }
+        if (indClippedSdr->get_active()) {
+            indClippedSdr->set_active(false);
+        }
         previewSharpMask->set_active(false);
     } else if (tb == previewSharpMask) {
         if (indClippedS->get_active()) {
@@ -133,6 +170,9 @@ void IndicateClippedPanel::buttonToggled (Gtk::ToggleButton* tb)
         }
         if (indClippedH->get_active()) {
             indClippedH->set_active(false);
+        }
+        if (indClippedSdr->get_active()) {
+            indClippedSdr->set_active(false);
         }
         previewFocusMask->set_active(false);
     } else {
@@ -148,6 +188,7 @@ void IndicateClippedPanel::buttonToggled (Gtk::ToggleButton* tb)
     connSharpMask.block(false);
     connClippedS.block(false);
     connClippedH.block(false);
+    connClippedSdr.block(false);
 
     imageArea->queue_draw ();
 

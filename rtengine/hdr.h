@@ -17,7 +17,9 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <optional>
+#include <vector>
 
 #include <lcms2.h>
 
@@ -31,6 +33,7 @@ namespace rtengine
 {
 
 class Imagefloat;
+class LabImage;
 
 namespace procparams
 {
@@ -82,6 +85,18 @@ inline void sdrFromHdrLinear(const Matrix3& hdrToBase, const float in[3], float 
         out[c] = v < 0.0 ? 0.f : (v > 1.0 ? 1.f : static_cast<float>(v));
     }
 }
+
+// Flags classifying each pixel of HDR output relative to SDR, as shown by the clipping indicators.
+enum HdrClipFlag : uint8_t {
+    HDR_CLIP_ABOVE_PEAK = 1,       // brighter than the HDR output can encode (max nits, HLG peak): clipped in HDR too
+    HDR_CLIP_ABOVE_SDR = 2,        // luminance above paper white: can't be shown in SDR, even desaturated
+    HDR_CLIP_OUTSIDE_SDR_GAMUT = 4 // within SDR luminance, but outside the SDR base gamut
+};
+
+// Classifies the pixels of a region of a Lab image (as the pipeline produces it, L = 32768 for paper
+// white) for HDR output with the given colour management settings, one HdrClipFlag set per pixel,
+// row by row. Leaves `flags` empty if the output isn't HDR.
+void computeClipFlags(const LabImage& lab, int cx, int cy, int cw, int ch, const procparams::ColorManagementParams& icm, std::vector<uint8_t>& flags, bool multiThread);
 
 // H.273 / CICP codes describing a profile, 2 (unspecified) when not matched exactly.
 // Primaries are matched on their chromaticities, the transfer curve by sampling.

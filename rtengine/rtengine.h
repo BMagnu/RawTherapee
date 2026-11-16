@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <ctime>
 #include <string>
+#include <vector>
 #include <memory>
 
 #include <glibmm/ustring.h>
@@ -263,10 +264,12 @@ class DetailedCropListener
 public:
     virtual ~DetailedCropListener() = default;
     /** With this member function the staged processor notifies the listener that the detailed crop image has been updated.
-      * @param img is a pointer to the detailed crop image */
+      * @param img is a pointer to the detailed crop image
+      * @param hdrClipFlags for HDR output, one hdr::HdrClipFlag set per pixel of img, row by row; nullptr otherwise */
     virtual void setDetailedCrop(
         IImage8* img,
         IImage8* imgtrue,
+        const std::vector<uint8_t>* hdrClipFlags,
         const procparams::ColorManagementParams& cmp,
         const procparams::CropParams& cp,
         const procparams::CropGuideParams& guideParams,

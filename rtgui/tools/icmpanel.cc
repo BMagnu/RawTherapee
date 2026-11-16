@@ -50,9 +50,9 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
 {    
     CurveListener::setMulti(true);
     auto m = ProcEventMapper::getInstance();
-    EvOPaperwhiteNits = m->newEvent(GAMMA, "HISTORY_MSG_ICM_PAPERWHITE");
-    EvOMaxNits = m->newEvent(GAMMA, "HISTORY_MSG_ICM_MAXNITS");
-    EvOSdrBaseProfile = m->newEvent(GAMMA, "HISTORY_MSG_ICM_SDRBASE");
+    EvOPaperwhiteNits = m->newEvent(OUTPUTPROFILE, "HISTORY_MSG_ICM_PAPERWHITE");
+    EvOMaxNits = m->newEvent(OUTPUTPROFILE, "HISTORY_MSG_ICM_MAXNITS");
+    EvOSdrBaseProfile = m->newEvent(OUTPUTPROFILE, "HISTORY_MSG_ICM_SDRBASE");
     EvICMprimariMethod = m->newEvent(GAMMA, "HISTORY_MSG_ICM_OUTPUT_PRIMARIES");
     EvICMprofileMethod = m->newEvent(GAMMA, "HISTORY_MSG_ICM_OUTPUT_TYPE");
     EvICMtempMethod = m->newEvent(GAMMA, "HISTORY_MSG_ICM_OUTPUT_TEMP");

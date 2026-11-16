@@ -98,6 +98,7 @@ public:
     void setDetailedCrop(
         rtengine::IImage8* im,
         rtengine::IImage8* imworking,
+        const std::vector<uint8_t>* hdrClipFlags,
         const rtengine::procparams::ColorManagementParams& cmp,
         const rtengine::procparams::CropParams& cp,
         const rtengine::procparams::CropGuideParams& guideParams,
@@ -120,6 +121,9 @@ public:
     const std::unique_ptr<rtengine::procparams::ColorManagementParams> colorParams;
     Glib::RefPtr<Gdk::Pixbuf> cropPixbuf;     // image displayed on monitor, using the monitor profile (i.e. lab to monitor profile)
     Glib::RefPtr<Gdk::Pixbuf> cropPixbuftrue; // internal image in output color space for analysis (i.e. lab to either Working profile or Output profile, depending on options.rtSettings.HistogramWorking)
+    // For HDR output: per pixel rtengine::hdr::HdrClipFlag sets (in all three channels), scaled like
+    // cropPixbuf but without interpolation, so flags never mix. Empty when the output isn't HDR.
+    Glib::RefPtr<Gdk::Pixbuf> cropPixbufHdrFlags;
 
     MyMutex cimg;
 
@@ -145,6 +149,7 @@ private:
     bool enabled;
     std::vector<unsigned char> cropimg;
     std::vector<unsigned char> cropimgtrue;
+    std::vector<unsigned char> cropimgflags;
     int cropimg_width, cropimg_height;
     PendingUpdate pendingUpdate;
     int deviceScale;

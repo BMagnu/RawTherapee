@@ -27,6 +27,7 @@
 #include "dcp.h"
 #include "dcrop.h"
 #include "guidedfilter.h"
+#include "hdr.h"
 #include "image8.h"
 #include "imagefloat.h"
 #include "improccoordinator.h"
@@ -1965,8 +1966,12 @@ void Crop::update(int todo)
             memcpy(finaltrue->data + 3 * i * finalW, cropImgtrue->data + 3 * (i + upperBorder)*cropw + 3 * leftBorder, 3 * finalW);
         }
 
+        // For HDR output, classify what exceeds SDR or the HDR output itself, for the clipping indicators
+        std::vector<uint8_t> hdrClipFlags;
+        hdr::computeClipFlags(*labnCrop, leftBorder, upperBorder, finalW, finalH, params.icm, hdrClipFlags, true);
+
         cropImageListener->setDetailedCrop(
-            final, finaltrue, params.icm, params.crop, params.cropGuide,
+            final, finaltrue, hdrClipFlags.empty() ? nullptr : &hdrClipFlags, params.icm, params.crop, params.cropGuide,
             rqcropx, rqcropy, rqcropw, rqcroph, skip);
         delete final;
         delete finaltrue;

@@ -303,6 +303,7 @@ bool CropHandler::acceptUpdate(const PendingUpdate& pending) const
 void CropHandler::setDetailedCrop(
     IImage8* im,
     IImage8* imtrue,
+    const std::vector<uint8_t>* hdrClipFlags,
     const rtengine::procparams::ColorManagementParams& cmp,
     const rtengine::procparams::CropParams& cp,
     const rtengine::procparams::CropGuideParams& guideParams,
@@ -331,6 +332,8 @@ void CropHandler::setDetailedCrop(
         cropimgtrue.clear();
     }
 
+    cropimgflags.clear();
+
     PendingUpdate received = {};
     received.x = ax;
     received.y = ay;
@@ -344,6 +347,16 @@ void CropHandler::setDetailedCrop(
         const std::size_t cropimg_size = 3 * cropimg_width * cropimg_height;
         cropimg.assign(im->getData(), im->getData() + cropimg_size);
         cropimgtrue.assign(imtrue->getData(), imtrue->getData() + cropimg_size);
+
+        if (hdrClipFlags && hdrClipFlags->size() * 3 == cropimg_size) {
+            // Replicated to all three channels, so the pixbuf scaling below can be reused
+            cropimgflags.resize(cropimg_size);
+
+            for (std::size_t i = 0; i < hdrClipFlags->size(); ++i) {
+                cropimgflags[3 * i] = cropimgflags[3 * i + 1] = cropimgflags[3 * i + 2] = (*hdrClipFlags)[i];
+            }
+        }
+
         pendingUpdate = received;
 
         bool expected = false;
@@ -356,10 +369,12 @@ void CropHandler::setDetailedCrop(
 
                     if (redraw_needed.exchange(false)) {
                         cropPixbuf.clear ();
+                        cropPixbufHdrFlags.clear ();
 
                         if (!enabled) {
                             cropimg.clear();
                             cropimgtrue.clear();
+                            cropimgflags.clear();
                             cimg.unlock ();
                             return false;
                         }
@@ -391,10 +406,17 @@ void CropHandler::setDetailedCrop(
                                 cropPixbuftrue = Gdk::Pixbuf::create (Gdk::COLORSPACE_RGB, false, 8, imw, imh);
                                 tmpPixbuftrue->scale (cropPixbuftrue, 0, 0, imw, imh, 0, 0, czoom, czoom, Gdk::INTERP_TILES);
                                 tmpPixbuftrue.clear ();
+
+                                if (!cropimgflags.empty()) {
+                                    Glib::RefPtr<Gdk::Pixbuf> tmpPixbufFlags = Gdk::Pixbuf::create_from_data (cropimgflags.data(), Gdk::COLORSPACE_RGB, false, 8, cropimg_width, cropimg_height, 3 * cropimg_width);
+                                    cropPixbufHdrFlags = Gdk::Pixbuf::create (Gdk::COLORSPACE_RGB, false, 8, imw, imh);
+                                    tmpPixbufFlags->scale (cropPixbufHdrFlags, 0, 0, imw, imh, 0, 0, czoom, czoom, Gdk::INTERP_NEAREST);
+                                }
                             }
 
                             cropimg.clear();
                             cropimgtrue.clear();
+                            cropimgflags.clear();
                         }
 
                         cimg.unlock ();

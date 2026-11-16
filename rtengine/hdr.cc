@@ -22,6 +22,7 @@
 
 #include "color.h"
 #include "imagefloat.h"
+#include "labimage.h"
 #include "procparams.h"
 #include "rt_math.h"
 
@@ -214,6 +215,86 @@ std::array<double, 3> profileLuma(cmsHPROFILE profile)
     }
 
     return {0.2627, 0.6780, 0.0593};
+}
+
+void computeClipFlags(const LabImage& lab, int cx, int cy, int cw, int ch, const procparams::ColorManagementParams& icm, std::vector<uint8_t>& flags, bool multiThread)
+{
+    flags.clear();
+    const std::optional<TransferFunction> transfer = outputTransferFunction(icm);
+
+    if (!transfer || cw <= 0 || ch <= 0) {
+        return;
+    }
+
+    const ICCStore* const store = ICCStore::getInstance();
+    Matrix3 outToXyz, baseToXyz, xyzToOut, xyzToBase;
+
+    if (
+        !profileMatrix(store->getProfile(icm.outputProfile), outToXyz)
+        || !invertMatrix(outToXyz, xyzToOut)
+    ) {
+        return;
+    }
+
+    // Without a usable base, judge the SDR gamut by the HDR output's own primaries
+    const bool haveBase = profileMatrix(store->getProfile(icm.outputSdrBaseProfile), baseToXyz) && invertMatrix(baseToXyz, xyzToBase);
+
+    if (!haveBase) {
+        xyzToBase = xyzToOut;
+    }
+
+    const double paperwhite = LIM(icm.outputPaperwhiteNits, 1.0, 10000.0);
+    // Relative to paper white, with a little tolerance so values that encode exactly at the
+    // ceiling, or exactly at paper white, don't flicker in and out of the indicators
+    const double peak = peakNits(*transfer, icm.outputMaxNits) / paperwhite * 0.999;
+    constexpr double sdrWhite = 1.0 + 1e-4;
+    constexpr double gamutTolerance = 1e-4;
+
+    flags.assign(static_cast<size_t>(cw) * ch, 0);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic, 16) if (multiThread)
+#endif
+
+    for (int i = 0; i < ch; ++i) {
+        const float* const rL = lab.L[cy + i];
+        const float* const ra = lab.a[cy + i];
+        const float* const rb = lab.b[cy + i];
+        uint8_t* const row = flags.data() + static_cast<size_t>(i) * cw;
+
+        for (int j = 0; j < cw; ++j) {
+            float fx, fy, fz;
+            Color::Lab2XYZ(rL[cx + j], ra[cx + j], rb[cx + j], fx, fy, fz);
+            // Y = 1 is paper white
+            const double xyz[3] = {fx / 65535.0, fy / 65535.0, fz / 65535.0};
+            uint8_t f = 0;
+
+            double out[3];
+
+            for (int c = 0; c < 3; ++c) {
+                out[c] = xyzToOut[c][0] * xyz[0] + xyzToOut[c][1] * xyz[1] + xyzToOut[c][2] * xyz[2];
+            }
+
+            if (rtengine::max(out[0], out[1], out[2]) >= peak) {
+                f |= HDR_CLIP_ABOVE_PEAK;
+            }
+
+            if (xyz[1] > sdrWhite) {
+                f |= HDR_CLIP_ABOVE_SDR;
+            } else {
+                for (int c = 0; c < 3; ++c) {
+                    const double v = xyzToBase[c][0] * xyz[0] + xyzToBase[c][1] * xyz[1] + xyzToBase[c][2] * xyz[2];
+
+                    if (v < -gamutTolerance || v > 1.0 + gamutTolerance) {
+                        f |= HDR_CLIP_OUTSIDE_SDR_GAMUT;
+                        break;
+                    }
+                }
+            }
+
+            row[j] = f;
+        }
+    }
 }
 
 bool conversionMatrix(cmsHPROFILE from, cmsHPROFILE to, Matrix3& fromToTo)

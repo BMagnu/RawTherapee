@@ -35,6 +35,7 @@
 #include "rtsurface.h"
 
 #include "rtengine/dcrop.h"
+#include "rtengine/hdr.h"
 #include "rtengine/imagesource.h"
 #include "rtengine/procparams.h"
 #include "rtengine/profiling.h"
@@ -1574,6 +1575,14 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
             bool showcs = iarea->indClippedPanel->showClippedShadows();
             bool showch = iarea->indClippedPanel->showClippedHighlights();
 
+            // For HDR output, the engine classifies each pixel against SDR and the HDR ceiling
+            const Glib::RefPtr<Gdk::Pixbuf>& hdrFlags = cropHandler.cropPixbufHdrFlags;
+            const bool hdrMode =
+                hdrFlags
+                && hdrFlags->get_width() == cropHandler.cropPixbuf->get_width()
+                && hdrFlags->get_height() == cropHandler.cropPixbuf->get_height();
+            const bool showsdr = hdrMode && iarea->indClippedPanel->showClippedSdr();
+
             // While the Right-side ALT is pressed, auto-enable highlight and shadow clipping indicators
             // TODO: Add linux/MacOS specific functions for alternative
 #ifdef _WIN32
@@ -1585,7 +1594,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
 
 #endif
 
-            if (showcs || showch || showR || showG || showB || showL || showFocusMask) {
+            if (showcs || showch || showsdr || showR || showG || showB || showL || showFocusMask) {
                 Glib::RefPtr<Gdk::Pixbuf> tmp = cropHandler.cropPixbuf->copy ();
                 guint8* pix = tmp->get_pixels();
                 guint8* pixWrkSpace = cropHandler.cropPixbuftrue->get_pixels();
@@ -1839,12 +1848,15 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                     for (int i = 0; i < bHeight; i++) {
                         guint8* curr = pix + i * pixRowStride;
                         guint8* currWS = pixWrkSpace + i * pixWSRowStride;
+                        const guint8* currFlags = hdrMode ? hdrFlags->get_pixels() + i * hdrFlags->get_rowstride() : nullptr;
 
                         for (int j = 0; j < bWidth; j++) {
                             // we must compare clippings in working space, since the cropPixbuf is in sRGB, with mon profile
 
                             bool changedHL = false;
                             bool changedSH = false;
+                            bool changedSDR = false;
+                            const uint8_t flags = currFlags ? currFlags[3 * j] : 0;
                             int delta = 0;
                             // for efficiency, pre-calculate currWS_L as it may be needed in both
                             // if (showch) and if (showcs) branches
@@ -1854,7 +1866,20 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                                 currWS_L = (int)(0.299f * currWS[0] + 0.587f * currWS[1] + 0.114f * currWS[2]);
                             }
 
-                            if (showch) {
+                            if (showch && hdrMode) {
+                                // With HDR output, highlights only clip where they exceed what the
+                                // output can encode (the max nits setting, or HLG's peak), not at SDR white.
+                                if (flags & rtengine::hdr::HDR_CLIP_ABOVE_PEAK) {
+                                    changedHL = true;
+
+                                    if (showclippedAny) {
+                                        curr[0] = curr[1] = curr[2] = 0;    // indicate clipped highlights in gray (fully clipped: black)
+                                    } else {
+                                        curr[0] = 255;    // indicate clipped highlights in red
+                                        curr[1] = curr[2] = 0;
+                                    }
+                                }
+                            } else if (showch) {
                                 if ((showclippedAny || showR) && currWS[0] >= hlThreshold ) {
                                     delta += 255 - currWS[0];
                                     changedHL = true;
@@ -1924,8 +1949,23 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                                 }
                             } //if (showcs)
 
+                            if (showsdr && !changedHL && !changedSH) {
+                                // Keep a bit of the image's brightness, so detail remains visible under the warning
+                                const int lum = (299 * curr[0] + 587 * curr[1] + 114 * curr[2]) / 3000;
+
+                                if (flags & rtengine::hdr::HDR_CLIP_ABOVE_SDR) {
+                                    curr[0] = 255;    // beyond SDR brightness: red
+                                    curr[1] = curr[2] = lum;
+                                    changedSDR = true;
+                                } else if (flags & rtengine::hdr::HDR_CLIP_OUTSIDE_SDR_GAMUT) {
+                                    curr[2] = 255;    // within SDR brightness, but outside the SDR gamut: blue
+                                    curr[0] = curr[1] = lum;
+                                    changedSDR = true;
+                                }
+                            }
+
                             // modulate the preview of channels & L;
-                            if (!changedHL && !changedSH && !showclippedAny) {         //This condition allows clipping indicators for RGB channels to remain in color
+                            if (!changedHL && !changedSH && !changedSDR && !showclippedAny) {         //This condition allows clipping indicators for RGB channels to remain in color
                                 if (showR) {
                                     curr[1] = curr[2] = curr[0];    //Red   channel in grayscale
                                 }
@@ -2829,6 +2869,11 @@ void CropWindow::drawObservedFrame (const Cairo::RefPtr<Cairo::Context>& cr)
 void CropWindow::cropImageUpdated ()
 {
     MyMutex::MyLock lock(cropHandler.cimg);
+
+    // The main crop of the image area owning the indicator panel decides whether the output is HDR
+    if (this == iarea->mainCropWindow && iarea->indClippedPanel && iarea->indClippedPanel->getImageArea() == iarea) {
+        iarea->indClippedPanel->setHdrMode(static_cast<bool>(cropHandler.cropPixbufHdrFlags));
+    }
 
     for (auto colorPicker : colorPickers) {
         Coord imgPos, cropPos;
