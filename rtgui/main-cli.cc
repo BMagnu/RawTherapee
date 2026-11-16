@@ -247,6 +247,7 @@ int processLineParams ( int argc, char **argv )
     int subsampling = 3;
     int bits = -1;
     bool isFloat = false;
+    bool avifGainMap = false;
     std::string outputType;
     unsigned errors = 0;
 
@@ -414,11 +415,12 @@ int processLineParams ( int argc, char **argv )
 
                 case 'v':
                     outputType = "avif";
+                    avifGainMap = currParam.size() >= 3 && currParam.at(2) == 'g'; // -vg[0-100]
 
-                    if (currParam.size() < 3) {
+                    if (currParam.size() < (avifGainMap ? 4u : 3u)) {
                         compression = 90;
                     } else {
-                        compression = atoi (currParam.substr (2).c_str());
+                        compression = atoi (currParam.substr (avifGainMap ? 3 : 2).c_str());
 
                         if (compression < 0 || compression > 100) {
                             std::cerr << "Error: the value accompanying the -v switch has to be in the [0-100] range!" << std::endl;
@@ -581,8 +583,10 @@ int processLineParams ( int argc, char **argv )
                     std::cout << "                   Uncompressed by default, or deflate compression with 'z'." << std::endl;
                     std::cout << "  -n               Specify output to be compressed PNG." << std::endl;
                     std::cout << "                   Compression is hard-coded to PNG_FILTER_PAETH, Z_RLE." << std::endl;
-                    std::cout << "  -v[0-100]        Specify output to be AVIF." << std::endl;
+                    std::cout << "  -v[g][0-100]     Specify output to be AVIF." << std::endl;
                     std::cout << "                   Optionally, specify quality 0-100 (default value: 90, 100 is lossless)." << std::endl;
+                    std::cout << "                   With 'g' and an HDR output profile (PQ or HLG), store an SDR fallback image" << std::endl;
+                    std::cout << "                   plus an ISO 21496-1 gain map instead of the plain HDR image." << std::endl;
                     std::cout << "  -Y               Overwrite output if present." << std::endl;
                     std::cout << "  -f               Use the custom fast-export processing pipeline." << std::endl;
                     std::cout << std::endl;
@@ -628,6 +632,7 @@ int processLineParams ( int argc, char **argv )
             } else if (outputType == "avif") {
                 options.saveFormat.format = outputType;
                 options.saveFormat.avifQuality = compression;
+                options.saveFormat.avifGainMap = avifGainMap;
             }
 
             break;
@@ -832,7 +837,7 @@ int processLineParams ( int argc, char **argv )
         } else if ( outputType == "png" ) {
             errorCode = resultImage->saveAsPNG ( outputFile, bits );
         } else if ( outputType == "avif" ) {
-            errorCode = resultImage->saveAsAVIF ( outputFile, bits, compression );
+            errorCode = resultImage->saveAsAVIF ( outputFile, bits, compression, avifGainMap );
         } else {
             errorCode = resultImage->saveToFile (outputFile);
         }

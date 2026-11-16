@@ -195,6 +195,10 @@ std::tuple<Glib::ustring, bool> BatchQueueEntry::getToolTip (int x, int y) const
                 }
             } else if (saveFormat.format == "avif") {
                 tooltip += Glib::ustring::compose("\n%1: %2", M("SAVEDLG_AVIFQUAL"), saveFormat.avifQuality);
+
+                if (saveFormat.avifGainMap) {
+                    tooltip += Glib::ustring::compose("\n%1", M("SAVEDLG_AVIFGAINMAP"));
+                }
             }
         }
     }

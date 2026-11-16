@@ -52,6 +52,7 @@
 #endif
 
 #include "color.h"
+#include "hdr.h"
 #include "iccjpeg.h"
 #include "imagedata.h"
 #include "imageio.h"
@@ -122,6 +123,11 @@ void ImageIO::setMetadata(Exiv2Metadata info)
 void ImageIO::setOutputProfile(const ProfileContent& pdata)
 {
     profileData = pdata;
+}
+
+void ImageIO::setHdrInfo(const ProfileContent& sdrBaseProfile, double paperwhiteNits, double maxNits)
+{
+    hdrInfo = HdrInfo{sdrBaseProfile, paperwhiteNits, maxNits};
 }
 
 ImageIO::ImageIO() :
@@ -1301,9 +1307,423 @@ int ImageIO::saveJPEG (const Glib::ustring &fname, int quality, int subSamp) con
 }
 
 
+namespace
+{
+
+struct ProfileCloser {
+    void operator()(void* profile) const
+    {
+        if (profile) {
+            cmsCloseProfile(profile);
+        }
+    }
+};
+using ProfilePtr = std::unique_ptr<void, ProfileCloser>;
+
+// Colour is described by the embedded ICC profile, which libavif writes in preference to an
+// nclx colr box, but CICP still reaches the AV1 sequence header and consumers that ignore ICC
+// (hardware paths, compositors, etc.) read it from there. So guess it from the profile, only
+// ever signalling values matched exactly and leaving the rest unspecified - a wrong guess'
+// behaviour is effectively undefined in terms of what the decoder does.
+// Returns false if the colour can't be described at all, which would make for a broken image.
+bool describeAvifColor(avifImage* image, const ProfileContent& content, bool cicpOnly = false)
+{
+    image->colorPrimaries = AVIF_COLOR_PRIMARIES_UNSPECIFIED;
+    image->transferCharacteristics = AVIF_TRANSFER_CHARACTERISTICS_UNSPECIFIED;
+
+    if (content.getData().empty()) {
+        // No profile data is an issue with unspecified CP/TC falling back to effectively random stuff,
+        // so to avoid that, we define basic sRGB values
+        image->colorPrimaries = AVIF_COLOR_PRIMARIES_SRGB;
+        image->transferCharacteristics = AVIF_TRANSFER_CHARACTERISTICS_SRGB;
+        return true;
+    }
+
+    const ProfilePtr profile(content.toProfile());
+
+    if (!profile) {
+        return true;
+    }
+
+    image->colorPrimaries = static_cast<avifColorPrimaries>(hdr::cicpPrimaries(profile.get()));
+    image->transferCharacteristics = static_cast<avifTransferCharacteristics>(hdr::cicpTransferCharacteristics(profile.get()));
+
+    // We prefer ICC if possible, however if we have a curve that's unexpressible and goes
+    // beyond [0,1], we can't rely on it to correctly drive all decoders. In combination with
+    // libavif only writing the nclx colr box only when no profile is present, we must omit it
+    // in that case so we can properly embed CICP for the colr box.
+    if (!cicpOnly && !unexpressibleTransferFunction(profile.get())) {
+        return avifImageSetProfileICC(image, reinterpret_cast<const uint8_t*>(content.getData().data()), content.getData().size()) == AVIF_RESULT_OK;
+    }
+
+    // If we got here, we somehow had an unexpressible ICC transfer function, but we didn't match
+    // a correct AVIF CICP enum. That would result in a broken image, so bail.
+    return image->colorPrimaries != AVIF_COLOR_PRIMARIES_UNSPECIFIED && image->transferCharacteristics != AVIF_TRANSFER_CHARACTERISTICS_UNSPECIFIED;
+}
+
+// On Quality 100 (i.e. lossless), pick IDENTITY as matrix to store RGB values.
+// The YUV444 conversion is potentially a tiny bit inaccurate, and if someone
+// stores lossless, they probably overly care about that kind of thing.
+avifMatrixCoefficients avifMatrixFor(const avifImage* image, int quality)
+{
+    return
+        quality >= 100
+        ? AVIF_MATRIX_COEFFICIENTS_IDENTITY
+        : (image->colorPrimaries == AVIF_COLOR_PRIMARIES_BT2020
+           ? AVIF_MATRIX_COEFFICIENTS_BT2020_NCL
+           : AVIF_MATRIX_COEFFICIENTS_BT709);
+}
+
+avifSignedFraction toSignedFraction(double v)
+{
+    avifSignedFraction fraction = {0, 1};
+
+    if (!avifDoubleToSignedFraction(v, &fraction)) {
+        fraction = {0, 1};
+    }
+
+    return fraction;
+}
+
+avifUnsignedFraction toUnsignedFraction(double v)
+{
+    avifUnsignedFraction fraction = {0, 1};
+
+    if (!avifDoubleToUnsignedFraction(v, &fraction)) {
+        fraction = {0, 1};
+    }
+
+    return fraction;
+}
+
+}
+
+// Fills `image` (which must already be created at the right depth) with the SDR rendering of the HDR
+// output as the base image, and attaches an ISO 21496-1 gain map from it to the HDR output.
+// The gain map is computed in the colour space of the HDR (alternate) image, at full resolution
+// and with one channel per colour, so the HDR image can be reconstructed as closely as possible.
+int ImageIO::buildAvifGainMap(void* opaqueImage, int bps, int quality, TransferFunction transfer, int altTransferCode, int altPrimariesCode) const
+{
+    avifImage* const image = static_cast<avifImage*>(opaqueImage);
+    const avifTransferCharacteristics altTransfer = static_cast<avifTransferCharacteristics>(altTransferCode);
+    const avifColorPrimaries altPrimaries = static_cast<avifColorPrimaries>(altPrimariesCode);
+    const int width = getWidth();
+    const int height = getHeight();
+
+    const ProfilePtr hdrProfile(profileData.toProfile());
+    const ProfilePtr baseProfile(hdrInfo->sdrBaseProfile.toProfile());
+    hdr::Matrix3 hdrToBase, baseToHdr;
+
+    if (!hdrProfile || !baseProfile || !hdr::conversionMatrix(hdrProfile.get(), baseProfile.get(), hdrToBase) || !invertMatrix(hdrToBase, baseToHdr)) {
+        return IMIO_CANNOTWRITEFILE;
+    }
+
+    const std::array<double, 3> luma = hdr::profileLuma(hdrProfile.get());
+    const double paperwhite = LIM(hdrInfo->paperwhiteNits, 1.0, 10000.0);
+    const double maxNits = hdrInfo->maxNits;
+
+    // The base image is described by the base profile, but by CICP only: gain map appliers, libavif's
+    // included, generally don't support ICC described base images, and the base profile is chosen
+    // such that CICP describes it exactly.
+    if (!describeAvifColor(image, hdrInfo->sdrBaseProfile, true)) {
+        return IMIO_CANNOTWRITEFILE;
+    }
+
+    image->matrixCoefficients = avifMatrixFor(image, quality);
+
+    // Curves of the base profile, and their inverse
+    const cmsTagSignature trcTags[3] = {cmsSigRedTRCTag, cmsSigGreenTRCTag, cmsSigBlueTRCTag};
+    std::array<cmsToneCurve*, 3> inverseTrc = {nullptr, nullptr, nullptr};
+    const auto freeInverse = [&inverseTrc]() {
+        for (cmsToneCurve* curve : inverseTrc) {
+            if (curve) {
+                cmsFreeToneCurve(curve);
+            }
+        }
+    };
+
+    const int maxSample = (1 << bps) - 1;
+    // Linear light of every possible base sample, as a decoder will see the quantized base
+    std::vector<std::array<float, 3>> baseDecode(maxSample + 1);
+
+    for (int c = 0; c < 3; ++c) {
+        const cmsToneCurve* const trc = static_cast<const cmsToneCurve*>(cmsReadTag(baseProfile.get(), trcTags[c]));
+
+        if (!trc || !(inverseTrc[c] = cmsReverseToneCurve(trc))) {
+            freeInverse();
+            return IMIO_CANNOTWRITEFILE;
+        }
+
+        for (int s = 0; s <= maxSample; ++s) {
+            baseDecode[s][c] = cmsEvalToneCurveFloat(trc, static_cast<float>(s) / maxSample);
+        }
+    }
+
+    // The HDR output is read back at 16 bits, which is finer than any AVIF depth, and decoded to
+    // linear light relative to paper white. PQ decodes per channel, so tabulate it.
+    std::vector<uint16_t> hdrSamples(static_cast<size_t>(width) * height * 3);
+
+    for (int i = 0; i < height; ++i) {
+        getScanline(i, reinterpret_cast<unsigned char*>(hdrSamples.data() + static_cast<size_t>(i) * width * 3), 16);
+    }
+
+    std::vector<float> decodeLut(65536);
+
+    for (int s = 0; s < 65536; ++s) {
+        const double x = s / 65535.0;
+        decodeLut[s] = transfer == TransferFunction::PQ ? Color::pq_eotf(x) * 10000.0 / paperwhite : Color::hlg_inv_oetf(x);
+    }
+
+    const auto hdrLinear = [&](size_t index, float lin[3]) {
+        for (int c = 0; c < 3; ++c) {
+            lin[c] = decodeLut[hdrSamples[index + c]];
+        }
+
+        if (transfer == TransferFunction::HLG) {
+            // decodeLut holds scene light, apply the OOTF
+            const double ys = luma[0] * lin[0] + luma[1] * lin[1] + luma[2] * lin[2];
+            const double gain = ys > 0.0 ? Color::hlg_nominal_peak * std::pow(ys, Color::hlg_system_gamma - 1.0) / paperwhite : 0.0;
+
+            for (int c = 0; c < 3; ++c) {
+                lin[c] *= gain;
+            }
+        }
+    };
+
+    // Offsets keep the gain finite where either image is black. They also limit how finely the gain
+    // map can correct the darkest tones: libavif's default of 1/64 (of paper white) left visible errors
+    // near black, while smaller offsets widen the gain range, which coarsens the highlights and, at
+    // lossy quality, amplifies compression noise in them. 1/256 measured as the best balance.
+    constexpr double offset = 1.0 / 256.0;
+
+    const auto gainOf = [&](const float lin[3], const uint16_t base[3], float gain[3]) {
+        const std::array<float, 3> b = {baseDecode[base[0]][0], baseDecode[base[1]][1], baseDecode[base[2]][2]};
+
+        for (int c = 0; c < 3; ++c) {
+            const double baseInHdr = rtengine::max(baseToHdr[c][0] * b[0] + baseToHdr[c][1] * b[1] + baseToHdr[c][2] * b[2], 0.0);
+            gain[c] = std::log2((rtengine::max<double>(lin[c], 0.0) + offset) / (baseInHdr + offset));
+        }
+    };
+
+    // Pass 1: the base image, the gain range, and the light levels of the HDR image
+    avifRGBImage baseRgb;
+    avifRGBImageSetDefaults(&baseRgb, image);
+    baseRgb.format = AVIF_RGB_FORMAT_RGB;
+    baseRgb.depth = bps;
+    baseRgb.avoidLibYUV = AVIF_TRUE;
+
+    if (avifRGBImageAllocatePixels(&baseRgb) != AVIF_RESULT_OK) {
+        freeInverse();
+        return IMIO_CANNOTWRITEFILE;
+    }
+
+    const avif::RGBImageCleanup cleanupBase(&baseRgb);
+
+    const auto baseRow16 = [&baseRgb](int row) {
+        return reinterpret_cast<uint16_t*>(baseRgb.pixels + static_cast<size_t>(row) * baseRgb.rowBytes);
+    };
+    const auto baseRow8 = [&baseRgb](int row) {
+        return baseRgb.pixels + static_cast<size_t>(row) * baseRgb.rowBytes;
+    };
+
+    std::array<float, 3> gainMin = {0.f, 0.f, 0.f};
+    std::array<float, 3> gainMax = {0.f, 0.f, 0.f};
+    double peak = 0.0;
+    double sumFrameLight = 0.0;
+
+#ifdef _OPENMP
+    #pragma omp parallel
+#endif
+    {
+        std::array<float, 3> localMin = {0.f, 0.f, 0.f};
+        std::array<float, 3> localMax = {0.f, 0.f, 0.f};
+        double localPeak = 0.0;
+        double localSum = 0.0;
+
+#ifdef _OPENMP
+        #pragma omp for schedule(dynamic, 16)
+#endif
+
+        for (int i = 0; i < height; ++i) {
+            for (int j = 0; j < width; ++j) {
+                const size_t index = (static_cast<size_t>(i) * width + j) * 3;
+                float lin[3];
+                hdrLinear(index, lin);
+
+                float sdr[3];
+                hdr::sdrFromHdrLinear(hdrToBase, lin, sdr);
+
+                uint16_t base[3];
+
+                for (int c = 0; c < 3; ++c) {
+                    base[c] = LIM<int>(cmsEvalToneCurveFloat(inverseTrc[c], sdr[c]) * maxSample + 0.5f, 0, maxSample);
+
+                    if (bps == 8) {
+                        baseRow8(i)[3 * j + c] = base[c];
+                    } else {
+                        baseRow16(i)[3 * j + c] = base[c];
+                    }
+                }
+
+                float gain[3];
+                gainOf(lin, base, gain);
+
+                for (int c = 0; c < 3; ++c) {
+                    localMin[c] = rtengine::min(localMin[c], gain[c]);
+                    localMax[c] = rtengine::max(localMax[c], gain[c]);
+                }
+
+                const double light = rtengine::max(lin[0], lin[1], lin[2]);
+                localPeak = rtengine::max(localPeak, light);
+                localSum += light;
+            }
+        }
+
+#ifdef _OPENMP
+        #pragma omp critical
+#endif
+        {
+            for (int c = 0; c < 3; ++c) {
+                gainMin[c] = rtengine::min(gainMin[c], localMin[c]);
+                gainMax[c] = rtengine::max(gainMax[c], localMax[c]);
+            }
+
+            peak = rtengine::max(peak, localPeak);
+            sumFrameLight += localSum;
+        }
+    }
+
+    freeInverse();
+
+    if (pl) {
+        pl->setProgress(0.25);
+    }
+
+    if (avifImageRGBToYUV(image, &baseRgb) != AVIF_RESULT_OK) {
+        return IMIO_CANNOTWRITEFILE;
+    }
+
+    // Pass 2: the gain map itself
+    avifGainMap* const gainMap = avifGainMapCreate();
+
+    if (!gainMap) {
+        return IMIO_CANNOTWRITEFILE;
+    }
+
+    // From here on, the image owns the gain map, and frees it with itself
+    image->gainMap = gainMap;
+    gainMap->image = avifImageCreate(width, height, bps, AVIF_PIXEL_FORMAT_YUV444);
+
+    if (!gainMap->image) {
+        return IMIO_CANNOTWRITEFILE;
+    }
+
+    gainMap->image->yuvRange = AVIF_RANGE_FULL;
+    gainMap->image->colorPrimaries = AVIF_COLOR_PRIMARIES_UNSPECIFIED;
+    gainMap->image->transferCharacteristics = AVIF_TRANSFER_CHARACTERISTICS_UNSPECIFIED;
+    gainMap->image->matrixCoefficients = quality >= 100 ? AVIF_MATRIX_COEFFICIENTS_IDENTITY : AVIF_MATRIX_COEFFICIENTS_BT601;
+
+    std::array<float, 3> gainRange;
+
+    for (int c = 0; c < 3; ++c) {
+        // A flat channel still needs a non empty range
+        if (gainMax[c] - gainMin[c] < 1e-4f) {
+            gainMax[c] = gainMin[c] + 1e-4f;
+        }
+
+        gainRange[c] = gainMax[c] - gainMin[c];
+    }
+
+    avifRGBImage mapRgb;
+    avifRGBImageSetDefaults(&mapRgb, gainMap->image);
+    mapRgb.format = AVIF_RGB_FORMAT_RGB;
+    mapRgb.depth = bps;
+    mapRgb.avoidLibYUV = AVIF_TRUE;
+
+    if (avifRGBImageAllocatePixels(&mapRgb) != AVIF_RESULT_OK) {
+        return IMIO_CANNOTWRITEFILE;
+    }
+
+    const avif::RGBImageCleanup cleanupMap(&mapRgb);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic, 16)
+#endif
+
+    for (int i = 0; i < height; ++i) {
+        uint8_t* const map8 = mapRgb.pixels + static_cast<size_t>(i) * mapRgb.rowBytes;
+        uint16_t* const map16 = reinterpret_cast<uint16_t*>(map8);
+
+        for (int j = 0; j < width; ++j) {
+            const size_t index = (static_cast<size_t>(i) * width + j) * 3;
+            float lin[3];
+            hdrLinear(index, lin);
+
+            uint16_t base[3];
+
+            for (int c = 0; c < 3; ++c) {
+                base[c] = bps == 8 ? baseRow8(i)[3 * j + c] : baseRow16(i)[3 * j + c];
+            }
+
+            float gain[3];
+            gainOf(lin, base, gain);
+
+            for (int c = 0; c < 3; ++c) {
+                // Gamma 1: the encoded value is linear in log2 space
+                const int encoded = LIM<int>((gain[c] - gainMin[c]) / gainRange[c] * maxSample + 0.5f, 0, maxSample);
+
+                if (bps == 8) {
+                    map8[3 * j + c] = encoded;
+                } else {
+                    map16[3 * j + c] = encoded;
+                }
+            }
+        }
+    }
+
+    if (pl) {
+        pl->setProgress(0.5);
+    }
+
+    if (avifImageRGBToYUV(gainMap->image, &mapRgb) != AVIF_RESULT_OK) {
+        return IMIO_CANNOTWRITEFILE;
+    }
+
+    for (int c = 0; c < 3; ++c) {
+        gainMap->gainMapMin[c] = toSignedFraction(gainMin[c]);
+        gainMap->gainMapMax[c] = toSignedFraction(gainMax[c]);
+        gainMap->gainMapGamma[c] = {1, 1};
+        gainMap->baseOffset[c] = toSignedFraction(offset);
+        gainMap->alternateOffset[c] = toSignedFraction(offset);
+    }
+
+    // The alternate image is fully shown once the display can go as far above SDR white as the
+    // brightest part of the image does, not the brightest the format could encode. A display with
+    // less headroom than that gets an interpolation between both.
+    const double ceiling = hdr::peakNits(transfer, maxNits) / paperwhite;
+    gainMap->baseHdrHeadroom = {0, 1};
+    gainMap->alternateHdrHeadroom = toUnsignedFraction(rtengine::max(std::log2(LIM(peak, 1.0, ceiling)), 1.0 / 64.0));
+    gainMap->useBaseColorSpace = AVIF_FALSE;
+
+    gainMap->altColorPrimaries = altPrimaries;
+    gainMap->altTransferCharacteristics = altTransfer;
+    gainMap->altMatrixCoefficients = altPrimaries == AVIF_COLOR_PRIMARIES_BT2020 ? AVIF_MATRIX_COEFFICIENTS_BT2020_NCL : AVIF_MATRIX_COEFFICIENTS_BT709;
+    gainMap->altYUVRange = AVIF_RANGE_FULL;
+    gainMap->altDepth = bps;
+    gainMap->altPlaneCount = 3;
+
+    if (transfer == TransferFunction::PQ) {
+        const double maxPALL = sumFrameLight / (static_cast<double>(width) * height);
+        gainMap->altCLLI.maxCLL = static_cast<uint16_t>(LIM(peak * paperwhite + 0.5, 0.0, 65535.0));
+        gainMap->altCLLI.maxPALL = static_cast<uint16_t>(LIM(maxPALL * paperwhite + 0.5, 0.0, 65535.0));
+    }
+
+    return IMIO_SUCCESS;
+}
+
 // Quality 0..100, bps 8, 10 or 12. Quality 100 is lossless: it keeps the identity matrix below,
 // so no YUV conversion happens and nothing but the quantizer can lose information.
-int ImageIO::saveAVIF (const Glib::ustring &fname, int bps, int quality) const
+int ImageIO::saveAVIF (const Glib::ustring &fname, int bps, int quality, bool gainMap) const
 {
     if (getWidth() < 1 || getHeight() < 1) {
         return IMIO_HEADERERROR;
@@ -1326,270 +1746,122 @@ int ImageIO::saveAVIF (const Glib::ustring &fname, int bps, int quality) const
 
     image->yuvRange = AVIF_RANGE_FULL;
 
-    // Colour is described by the embedded ICC profile, which libavif writes in preference to an
-    // nclx colr box, but CICP still reaches the AV1 sequence header and consumers that ignore ICC
-    // (hardware paths, compositors, etc.) read it from there. So guess it from the profile, only
-    // ever signalling values matched exactly and leaving the rest unspecified - a wrong guess'
-    // behaviour is effectively undefined in terms of what the decoder does.
-    image->colorPrimaries = AVIF_COLOR_PRIMARIES_UNSPECIFIED;
-    image->transferCharacteristics = AVIF_TRANSFER_CHARACTERISTICS_UNSPECIFIED;
-
-    // Here we can rely on avifColorPrimariesFind, so we only need to extract the colors from the profile
-    const auto iccPrimariesXY = [](cmsHPROFILE profile, float primaries[8]) -> bool {
-        if (cmsGetColorSpace(profile) != cmsSigRgbData || !cmsIsMatrixShaper(profile)) {
-            return false;
-        }
-
-        const cmsCIEXYZ* const colorants[3] = {
-            static_cast<const cmsCIEXYZ*>(cmsReadTag(profile, cmsSigRedMatrixColumnTag)),
-            static_cast<const cmsCIEXYZ*>(cmsReadTag(profile, cmsSigGreenMatrixColumnTag)),
-            static_cast<const cmsCIEXYZ*>(cmsReadTag(profile, cmsSigBlueMatrixColumnTag))
-        };
-
-        if (!colorants[0] || !colorants[1] || !colorants[2]) {
-            return false;
-        }
-
-        const cmsCIEXYZ d50Xyz = {0.9642, 1.0, 0.8249};
-        std::array<cmsCIEXYZ, 4> xyz = {*colorants[0], *colorants[1], *colorants[2], d50Xyz};
-
-        if (const auto* const chad = static_cast<const cmsFloat64Number*>(cmsReadTag(profile, cmsSigChromaticAdaptationTag))) {
-            std::array<std::array<double, 3>, 3> forward, inverse;
-
-            for (int row = 0; row < 3; ++row) {
-                for (int col = 0; col < 3; ++col) {
-                    forward[row][col] = chad[3 * row + col];
-                }
-            }
-
-            if (!invertMatrix(forward, inverse)) {
-                return false;
-            }
-
-            for (cmsCIEXYZ& value : xyz) {
-                const cmsCIEXYZ in = value;
-                value.X = inverse[0][0] * in.X + inverse[0][1] * in.Y + inverse[0][2] * in.Z;
-                value.Y = inverse[1][0] * in.X + inverse[1][1] * in.Y + inverse[1][2] * in.Z;
-                value.Z = inverse[2][0] * in.X + inverse[2][1] * in.Y + inverse[2][2] * in.Z;
-            }
-        } else {
-            const auto* const whitePoint = static_cast<const cmsCIEXYZ*>(cmsReadTag(profile, cmsSigMediaWhitePointTag));
-
-            if (!whitePoint) {
-                return false;
-            }
-
-            xyz[3] = *whitePoint;
-
-            for (int i = 0; i < 3; ++i) {
-                cmsCIEXYZ adapted;
-
-                if (!cmsAdaptToIlluminant(&adapted, &d50Xyz, &xyz[3], &xyz[i])) {
-                    return false;
-                }
-
-                xyz[i] = adapted;
-            }
-        }
-
-        for (int i = 0; i < 4; ++i) {
-            const double sum = xyz[i].X + xyz[i].Y + xyz[i].Z;
-
-            if (!(std::abs(sum) > 1e-6)) {
-                return false;
-            }
-
-            primaries[2 * i] = xyz[i].X / sum;
-            primaries[2 * i + 1] = xyz[i].Y / sum;
-        }
-
-        return true;
-    };
-
-    // Transfer curves have to be matched manually
-    const auto iccTransferCharacteristics = [](cmsHPROFILE profile) -> avifTransferCharacteristics {
-        const cmsTagSignature trcTags[3] = {cmsSigRedTRCTag, cmsSigGreenTRCTag, cmsSigBlueTRCTag};
-        cmsToneCurve* curves[3];
-
-        for (int i = 0; i < 3; ++i) {
-            curves[i] = static_cast<cmsToneCurve*>(cmsReadTag(profile, trcTags[i]));
-
-            if (!curves[i]) {
-                return AVIF_TRANSFER_CHARACTERISTICS_UNSPECIFIED;
-            }
-        }
-
-        struct Candidate {
-            avifTransferCharacteristics tc;
-            double (*curve)(double);
-        };
-
-        const Candidate candidates[] = {
-            {
-                AVIF_TRANSFER_CHARACTERISTICS_SRGB,
-                [](double x) { return x <= 0.04045 ? x / 12.92 : std::pow((x + 0.055) / 1.055, 2.4); }
-            },
-            {
-                AVIF_TRANSFER_CHARACTERISTICS_BT709,
-                [](double x) { return x < 0.081 ? x / 4.5 : std::pow((x + 0.099) / 1.099, 1.0 / 0.45); }
-            },
-            {AVIF_TRANSFER_CHARACTERISTICS_BT470M, [](double x) { return std::pow(x, 2.2); }},
-            {AVIF_TRANSFER_CHARACTERISTICS_BT470BG, [](double x) { return std::pow(x, 2.8); }},
-            {AVIF_TRANSFER_CHARACTERISTICS_LINEAR, [](double x) { return x; }},
-            {AVIF_TRANSFER_CHARACTERISTICS_PQ, Color::pq_eotf},
-            {
-                AVIF_TRANSFER_CHARACTERISTICS_HLG,
-                [](double x) {
-                    constexpr double a = 0.17883277;
-                    constexpr double b = 1.0 - 4.0 * a;
-                    const double c = 0.5 - a * std::log(4.0 * a);
-                    return x <= 0.5 ? x * x / 3.0 : (std::exp((x - c) / a) + b) / 12.0;
-                }
-            }
-        };
-
-        constexpr int samples = 64;
-        constexpr double tolerance = 1e-3;
-
-        for (const Candidate& candidate : candidates) {
-            bool match = true;
-
-            for (int s = 0; s <= samples && match; ++s) {
-                const double x = static_cast<double>(s) / samples;
-                const double expected = candidate.curve(x);
-
-                for (int channel = 0; channel < 3 && match; ++channel) {
-                    match = std::abs(cmsEvalToneCurveFloat(curves[channel], x) - expected) <= tolerance;
-                }
-            }
-
-            if (match) {
-                return candidate.tc;
-            }
-        }
-
-        return AVIF_TRANSFER_CHARACTERISTICS_UNSPECIFIED;
-    };
-
-    if (!profileData.getData().empty()) {
-        if (const cmsHPROFILE profile = profileData.toProfile()) {
-            float primaries[8];
-
-            if (iccPrimariesXY(profile, primaries)) {
-                const avifColorPrimaries colorPrimaries = avifColorPrimariesFind(primaries, nullptr);
-
-                if (colorPrimaries != AVIF_COLOR_PRIMARIES_UNKNOWN) {
-                    image->colorPrimaries = colorPrimaries;
-                }
-            }
-
-            image->transferCharacteristics = iccTransferCharacteristics(profile);
-
-            // We prefer ICC if possible, however if we have a curve that's unexpressible and goes
-            // beyond [0,1], we can't rely on it to correctly drive all decoders. In combination with
-            // libavif only writing the nclx colr box only when no profile is present, we must omit it
-            // in that case so we can properly embed CICP for the colr box.
-            const bool iccDescribesTransfer = !unexpressibleTransferFunction(profile);
-            cmsCloseProfile(profile);
-
-            if (iccDescribesTransfer) {
-                if (avifImageSetProfileICC(image.get(), reinterpret_cast<const uint8_t*>(profileData.getData().data()), profileData.getData().size()) != AVIF_RESULT_OK) {
-                    return IMIO_CANNOTWRITEFILE;
-                }
-            }
-            else if (image->colorPrimaries == AVIF_COLOR_PRIMARIES_UNSPECIFIED || image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_UNSPECIFIED) {
-                // If we got here, we somehow had an unexpressible ICC transfer function, but we didn't match
-                // a correct AVIF CICP enum. That would result in a broken image, so bail.
-                return IMIO_CANNOTWRITEFILE;
-            }
-        }
+    if (!describeAvifColor(image.get(), profileData)) {
+        return IMIO_CANNOTWRITEFILE;
     }
-    else {
-        // No profile data is an issue with unspecified CP/TC falling back to effectively random stuff,
-        // so to avoid that, we define basic sRGB values
-        image->colorPrimaries = AVIF_COLOR_PRIMARIES_SRGB;
-        image->transferCharacteristics = AVIF_TRANSFER_CHARACTERISTICS_SRGB;
-    }
-
-    // On Quality 100 (i.e. lossless), pick IDENTITY as matrix to store RGB values.
-    // The YUV444 conversion is potentially a tiny bit inaccurate, and if someone
-    // stores lossless, they probably overly care about that kind of thing.
-    image->matrixCoefficients =
-        quality >= 100
-        ? AVIF_MATRIX_COEFFICIENTS_IDENTITY
-        : (image->colorPrimaries == AVIF_COLOR_PRIMARIES_BT2020
-           ? AVIF_MATRIX_COEFFICIENTS_BT2020_NCL
-           : AVIF_MATRIX_COEFFICIENTS_BT709);
 
     if (pl) {
         pl->setProgressStr ("PROGRESSBAR_SAVEAVIF");
         pl->setProgress (0.0);
     }
 
-    const int scanlineBps = bps == 8 ? 8 : 16;
+    // A gain map needs HDR output, matched by CICP, and a usable SDR base profile
+    std::optional<TransferFunction> gainMapTransfer;
 
-    avifRGBImage rgb;
-    avifRGBImageSetDefaults (&rgb, image.get());
-    rgb.format = AVIF_RGB_FORMAT_RGB;
-    rgb.depth = scanlineBps;
-    rgb.avoidLibYUV = AVIF_TRUE;
+    if (gainMap) {
+        const ProfilePtr outProfile(profileData.toProfile());
+        const ProfilePtr baseProfile(hdrInfo ? hdrInfo->sdrBaseProfile.toProfile() : nullptr);
+        const std::optional<TransferFunction> transfer = unexpressibleTransferFunction(outProfile.get());
 
-    if (avifRGBImageAllocatePixels (&rgb) != AVIF_RESULT_OK) {
-        return IMIO_CANNOTWRITEFILE;
-    }
-
-    const avif::RGBImageCleanup cleanupRgb (&rgb);
-
-    for (int i = 0; i < height; ++i) {
-        getScanline (i, rgb.pixels + static_cast<size_t>(i) * rgb.rowBytes, scanlineBps);
-
-        if (pl && !(i % 100)) {
-            pl->setProgress (0.5 * static_cast<float>(i + 1) / static_cast<float>(height));
+        if (
+            transfer
+            && hdrInfo
+            && hdr::isUsableSdrBaseProfile(baseProfile.get())
+            && (image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_PQ || image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_HLG)
+            && image->colorPrimaries != AVIF_COLOR_PRIMARIES_UNSPECIFIED
+        ) {
+            gainMapTransfer = transfer;
+        } else if (settings->verbose || !transfer) {
+            std::cerr << "AVIF: a gain map needs an HDR (PQ or HLG) output profile and an SDR base profile describable by CICP; saving without one." << std::endl;
         }
     }
 
-    // PQ is absolute, so the light levels are known once the samples are.
-    // Most decoders apparently don't check though, and fully rely on encoded
-    // CLLI data to possibly rescale image brightness in order to fit the
-    // image's dynamic range onto an available display rather than clipping
-    // so pre-calculating and encoding it is required for correct displaying.
-    if (image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_PQ) {
-        constexpr int lutSize = 1024;
-        std::array<double, lutSize> pqLut;
+    if (gainMapTransfer) {
+        const avifTransferCharacteristics altTransfer = image->transferCharacteristics;
+        const avifColorPrimaries altPrimaries = image->colorPrimaries;
 
-        for (int i = 0; i < lutSize; ++i) {
-            pqLut[i] = Color::pq_eotf(static_cast<double>(i) / (lutSize - 1)) * 10000.0;
+        // The primary image becomes the SDR one, so start its description from scratch
+        image.reset(avifImageCreate(width, height, bps, AVIF_PIXEL_FORMAT_YUV444));
+
+        if (!image) {
+            return IMIO_CANNOTWRITEFILE;
         }
 
-        const int maxSample = (1 << scanlineBps) - 1;
-        double maxCLL = 0.0;
-        double sumFrameLight = 0.0;
+        image->yuvRange = AVIF_RANGE_FULL;
+
+        const int result = buildAvifGainMap(image.get(), bps, quality, *gainMapTransfer, altTransfer, altPrimaries);
+
+        if (result != IMIO_SUCCESS) {
+            return result;
+        }
+    } else {
+        image->matrixCoefficients = avifMatrixFor(image.get(), quality);
+
+        const int scanlineBps = bps == 8 ? 8 : 16;
+
+        avifRGBImage rgb;
+        avifRGBImageSetDefaults (&rgb, image.get());
+        rgb.format = AVIF_RGB_FORMAT_RGB;
+        rgb.depth = scanlineBps;
+        rgb.avoidLibYUV = AVIF_TRUE;
+
+        if (avifRGBImageAllocatePixels (&rgb) != AVIF_RESULT_OK) {
+            return IMIO_CANNOTWRITEFILE;
+        }
+
+        const avif::RGBImageCleanup cleanupRgb (&rgb);
 
         for (int i = 0; i < height; ++i) {
-            const uint8_t* const row8 = rgb.pixels + static_cast<size_t>(i) * rgb.rowBytes;
-            const uint16_t* const row16 = reinterpret_cast<const uint16_t*>(row8);
+            getScanline (i, rgb.pixels + static_cast<size_t>(i) * rgb.rowBytes, scanlineBps);
 
-            for (int j = 0; j < width; ++j) {
-                int peak = 0;
-
-                for (int c = 0; c < 3; ++c) {
-                    const int sample = scanlineBps == 8 ? row8[3 * j + c] : row16[3 * j + c];
-                    peak = std::max(peak, sample);
-                }
-
-                const double light = pqLut[peak * (lutSize - 1) / maxSample];
-                maxCLL = std::max(maxCLL, light);
-                sumFrameLight += light;
+            if (pl && !(i % 100)) {
+                pl->setProgress (0.5 * static_cast<float>(i + 1) / static_cast<float>(height));
             }
         }
 
-        const double maxPALL = sumFrameLight / (static_cast<double>(width) * height);
-        image->clli.maxCLL = static_cast<uint16_t>(LIM(maxCLL + 0.5, 0.0, 65535.0));
-        image->clli.maxPALL = static_cast<uint16_t>(LIM(maxPALL + 0.5, 0.0, 65535.0));
-    }
+        // PQ is absolute, so the light levels are known once the samples are.
+        // Most decoders apparently don't check though, and fully rely on encoded
+        // CLLI data to possibly rescale image brightness in order to fit the
+        // image's dynamic range onto an available display rather than clipping
+        // so pre-calculating and encoding it is required for correct displaying.
+        if (image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_PQ) {
+            constexpr int lutSize = 1024;
+            std::array<double, lutSize> pqLut;
 
-    if (avifImageRGBToYUV (image.get(), &rgb) != AVIF_RESULT_OK) {
-        return IMIO_CANNOTWRITEFILE;
+            for (int i = 0; i < lutSize; ++i) {
+                pqLut[i] = Color::pq_eotf(static_cast<double>(i) / (lutSize - 1)) * 10000.0;
+            }
+
+            const int maxSample = (1 << scanlineBps) - 1;
+            double maxCLL = 0.0;
+            double sumFrameLight = 0.0;
+
+            for (int i = 0; i < height; ++i) {
+                const uint8_t* const row8 = rgb.pixels + static_cast<size_t>(i) * rgb.rowBytes;
+                const uint16_t* const row16 = reinterpret_cast<const uint16_t*>(row8);
+
+                for (int j = 0; j < width; ++j) {
+                    int peak = 0;
+
+                    for (int c = 0; c < 3; ++c) {
+                        const int sample = scanlineBps == 8 ? row8[3 * j + c] : row16[3 * j + c];
+                        peak = std::max(peak, sample);
+                    }
+
+                    const double light = pqLut[peak * (lutSize - 1) / maxSample];
+                    maxCLL = std::max(maxCLL, light);
+                    sumFrameLight += light;
+                }
+            }
+
+            const double maxPALL = sumFrameLight / (static_cast<double>(width) * height);
+            image->clli.maxCLL = static_cast<uint16_t>(LIM(maxCLL + 0.5, 0.0, 65535.0));
+            image->clli.maxPALL = static_cast<uint16_t>(LIM(maxPALL + 0.5, 0.0, 65535.0));
+        }
+
+        if (avifImageRGBToYUV (image.get(), &rgb) != AVIF_RESULT_OK) {
+            return IMIO_CANNOTWRITEFILE;
+        }
     }
 
     avif::EncoderPtr encoder(avifEncoderCreate());
@@ -1599,6 +1871,7 @@ int ImageIO::saveAVIF (const Glib::ustring &fname, int bps, int quality) const
     }
 
     encoder->quality = quality;
+    encoder->qualityGainMap = quality;
 #ifdef _OPENMP
     encoder->maxThreads = omp_get_max_threads();
 #endif

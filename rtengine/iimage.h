@@ -1913,8 +1913,9 @@ public:
       * @param fname is the name of the file
       * @param bps can be 8, 10 or 12 depending on the bits per pixels the output file will have
       * @param quality is the quality of the avif (0...100), 100 being lossless
+      * @param gainMap for HDR output, store an SDR base image plus an ISO 21496-1 gain map to the HDR image
         @return the error code, 0 if none */
-    virtual int saveAsAVIF (const Glib::ustring &fname, int bps = 8, int quality = 90) const = 0;
+    virtual int saveAsAVIF (const Glib::ustring &fname, int bps = 8, int quality = 90, bool gainMap = false) const = 0;
     /** @brief Sets the progress listener if you want to follow the progress of the image saving operations (optional).
       * @param pl is the pointer to the class implementing the ProgressListener interface */
     virtual void setSaveProgressListener (ProgressListener* pl) = 0;

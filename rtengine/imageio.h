@@ -19,6 +19,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <glibmm/ustring.h>
 
 #include "iccstore.h"
@@ -61,6 +62,13 @@ protected:
     ProgressListener* pl;
     cmsHPROFILE embProfile;
     ProfileContent profileData;
+
+    struct HdrInfo {
+        ProfileContent sdrBaseProfile;
+        double paperwhiteNits;
+        double maxNits;
+    };
+    std::optional<HdrInfo> hdrInfo;
     int profileLength;
     char* loadedProfileData;
     int loadedProfileLength;
@@ -113,13 +121,23 @@ public:
         bool uncompressed = false,
         bool big = false
     ) const;
-    int saveAVIF (const Glib::ustring &fname, int bps = 8, int quality = 90) const;
+    int saveAVIF (const Glib::ustring &fname, int bps = 8, int quality = 90, bool gainMap = false) const;
+
+private:
+    // `image` is an avifImage, the alternate colour description are its CICP codes. Kept opaque here
+    // so libavif's header stays out of everyone including this one.
+    int buildAvifGainMap(void* image, int bps, int quality, TransferFunction transfer, int altTransfer, int altPrimaries) const;
+
+public:
 
     cmsHPROFILE getEmbeddedProfile () const;
     void getEmbeddedProfileData (int& length, unsigned char*& pdata) const;
 
     void setMetadata(Exiv2Metadata info);
     void setOutputProfile(const ProfileContent& pdata);
+    // For HDR output: the profile of the SDR rendering (gain map base), and the luminances the
+    // output is encoded with.
+    void setHdrInfo(const ProfileContent& sdrBaseProfile, double paperwhiteNits, double maxNits);
 
     bool saveMetadata(const Glib::ustring &fname) const;
 

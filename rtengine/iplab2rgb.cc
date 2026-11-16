@@ -20,6 +20,7 @@
 
 #include "alignedbuffer.h"
 #include "color.h"
+#include "hdr.h"
 #include "iccmatrices.h"
 #include "iccstore.h"
 #include "image8.h"
@@ -362,7 +363,8 @@ Imagefloat* ImProcFunctions::lab2rgbOut(LabImage* lab, int cx, int cy, int cw, i
     }
 
     Imagefloat* image = new Imagefloat(cw, ch);
-    cmsHPROFILE oprof = ICCStore::getInstance()->createOutputProfile(icm);
+    std::optional<TransferFunction> deferredEncoding;
+    cmsHPROFILE oprof = ICCStore::getInstance()->createOutputProfile(icm, &deferredEncoding);
 
     if (oprof) {
         cmsUInt32Number flags = cmsFLAGS_NOOPTIMIZE | cmsFLAGS_NOCACHE;
@@ -379,6 +381,12 @@ Imagefloat* ImProcFunctions::lab2rgbOut(LabImage* lab, int cx, int cy, int cw, i
         image->ExecCMSTransform(hTransform, *lab, cx, cy);
         cmsDeleteTransform(hTransform);
         cmsCloseProfile(iprof);
+
+        if (deferredEncoding == TransferFunction::HLG) {
+            const std::array<double, 3> luma = hdr::profileLuma(oprof);
+            hdr::applyHlgEncoding(*image, icm.outputPaperwhiteNits, luma.data(), multiThread);
+        }
+
         cmsCloseProfile(oprof);
 
         image->normalizeFloatTo65535();

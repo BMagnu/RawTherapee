@@ -1485,6 +1485,7 @@ HISTORY_MSG_ICM_FBW;Black and White
 HISTORY_MSG_ICM_GAMUT;Gamut control
 HISTORY_MSG_ICM_MAXNITS;Output - Maximum luminance
 HISTORY_MSG_ICM_PAPERWHITE;Output - Paper white
+HISTORY_MSG_ICM_SDRBASE;Output - SDR base profile
 HISTORY_MSG_ICM_GREROT;Primaries Green rotation
 HISTORY_MSG_ICM_GRESAT;Primaries Green saturation
 HISTORY_MSG_ICM_GREX;Primaries Green X
@@ -2399,6 +2400,10 @@ SAMPLEFORMAT_64;32-bit floating-point
 SAVEDLG_AUTOSUFFIX;Automatically add a suffix if the file already exists
 SAVEDLG_AVIFQUAL;AVIF quality
 SAVEDLG_AVIFQUAL_TOOLTIP;AVIF quality. A quality of 100 is lossless, and produces considerably larger files.
+SAVEDLG_AVIFGAINMAP;Embed SDR fallback (gain map)
+SAVEDLG_AVIFGAINMAP_TOOLTIP;Only used with an HDR output profile (PQ or HLG).
+Stores an SDR rendering of the image, using the SDR base profile of the Color Management tool, as the main image, plus an ISO 21496-1 gain map that HDR capable viewers use to restore the HDR image.
+Viewers and displays without HDR support show the SDR image instead of a washed out HDR one.
 SAVEDLG_BIGTIFF;BigTIFF (no metadata support)
 SAVEDLG_FILEFORMAT;File format
 SAVEDLG_FILEFORMAT_FLOAT; floating-point
@@ -3009,7 +3014,7 @@ TP_ICM_NEUTRAL;Reset Primaries & Illuminant
 TP_ICM_NOICM;No ICM: sRGB Output
 TP_ICM_OPACITYWLI;Variable contrast
 TP_ICM_PAPERWHITE;Paper white (cd/m²)
-TP_ICM_PAPERWHITE_TOOLTIP;The luminance diffuse white (SDR clipping brightness) is exported at. Only used by output profiles with an absolute transfer function, such as PQ. The default of 203 is the BT.2408 reference white for HDR.
+TP_ICM_PAPERWHITE_TOOLTIP;The luminance diffuse white (SDR clipping brightness) is exported at. Only used by output profiles with an HDR transfer function, such as PQ or HLG. The default of 203 is the BT.2408 reference white for HDR, which HLG places at 75% signal.
 TP_ICM_OUTPUTPROFILE;Output Profile
 TP_ICM_OUTPUTPROFILE_TOOLTIP;By default all RTv4 or RTv2 profiles are with TRC - sRGB: g=2.4 s=12.92\n\nWith 'ICC Profile Creator' you can generate v4 or v2 profiles with the following choices;\n-Primaries: Aces AP0, Aces AP1, AdobeRGB, Prophoto, Rec2020, sRGB, Widegamut, BestRGB, BetaRGB, BruceRGB, Custom\n-TRC: BT709, sRGB, linear, standard g=2.2, standard g=1.8, Custom\n-Illuminant: D41, D50, D55, D60, D65, D80, stdA 2856K
 TP_ICM_POWER_TOOLTIP;Modifies global image appearance, similar to the Exposure slider, by applying a positive or negative Ev adjustment to the RGB data. This allows for better control of either the color gamut or the saturation; for the latter, small values of plus or minus 0.1 to 0.4 are sufficient. Higher gain values allow for future use with HDR displays.
@@ -3022,6 +3027,9 @@ TP_ICM_PRIMRED_TOOLTIP;Primaries Red:\nsRGB x=0.64 y=0.33\nAdobe x=0.64 y=0.33\n
 TP_ICM_PROFILEINTENT;Rendering Intent
 TP_ICM_REDFRAME;Custom Primaries
 TP_ICM_SAVEREFERENCE;Save Reference Image
+TP_ICM_SDRBASE;SDR base
+TP_ICM_SDRBASE_TOOLTIP;Profile of the SDR rendering of HDR output. It is used for the SDR fallback image stored alongside the HDR image (AVIF gain map), which is the HDR image with everything brighter than paper white, or outside this profile's gamut, clipped.
+Only profiles describable by CICP codes, with an SDR transfer curve, are listed.
 TP_ICM_SAVEREFERENCE_APPLYWB;Apply white balance
 TP_ICM_SAVEREFERENCE_APPLYWB_TOOLTIP;Generally, apply the white balance when saving images to create ICC profiles, and do not apply the white balance to create DCP profiles.
 TP_ICM_SAVEREFERENCE_TOOLTIP;Save the linear TIFF image before the input profile is applied. The result can be used for calibration purposes and generation of a camera profile.

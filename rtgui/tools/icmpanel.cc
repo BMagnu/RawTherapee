@@ -32,6 +32,7 @@
 #include "widgets/curves/curveeditorgroup.h"
 
 #include "rtengine/dcp.h"
+#include "rtengine/hdr.h"
 #include "rtengine/iccstore.h"
 #include "rtengine/procparams.h"
 #include "rtengine/utils.h"
@@ -51,6 +52,7 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
     auto m = ProcEventMapper::getInstance();
     EvOPaperwhiteNits = m->newEvent(GAMMA, "HISTORY_MSG_ICM_PAPERWHITE");
     EvOMaxNits = m->newEvent(GAMMA, "HISTORY_MSG_ICM_MAXNITS");
+    EvOSdrBaseProfile = m->newEvent(GAMMA, "HISTORY_MSG_ICM_SDRBASE");
     EvICMprimariMethod = m->newEvent(GAMMA, "HISTORY_MSG_ICM_OUTPUT_PRIMARIES");
     EvICMprofileMethod = m->newEvent(GAMMA, "HISTORY_MSG_ICM_OUTPUT_TYPE");
     EvICMtempMethod = m->newEvent(GAMMA, "HISTORY_MSG_ICM_OUTPUT_TEMP");
@@ -699,7 +701,8 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
     obpc->set_active(true);
     oProfVBox->pack_start(*obpc, Gtk::PACK_SHRINK);
 
-    // Absolute luminance, only shown for output profiles with an absolute transfer function (i.e. PQ currently)
+    // HDR settings, only shown for output profiles with an HDR transfer function (PQ, HLG).
+    // The maximum luminance only applies to absolute transfer functions (PQ).
     oNitsBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     oPaperwhiteNits = Gtk::manage(new Adjuster(M("TP_ICM_PAPERWHITE"), 50., 1000., 1., 203.));
     oPaperwhiteNits->set_tooltip_text(M("TP_ICM_PAPERWHITE_TOOLTIP"));
@@ -707,6 +710,23 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
     oMaxNits->set_tooltip_text(M("TP_ICM_MAXNITS_TOOLTIP"));
     oNitsBox->pack_start(*oPaperwhiteNits, Gtk::PACK_SHRINK);
     oNitsBox->pack_start(*oMaxNits, Gtk::PACK_SHRINK);
+
+    // Primaries and curve of the SDR rendering of HDR output, as used for the SDR fallback (gain map base)
+    Gtk::Box* sdrBaseHBox = Gtk::manage(new Gtk::Box());
+    Gtk::Label* sdrBaseLbl = Gtk::manage(new Gtk::Label(M("TP_ICM_SDRBASE")));
+    sdrBaseHBox->pack_start(*sdrBaseLbl, Gtk::PACK_SHRINK, 4);
+    oSdrBaseNames = Gtk::manage(new MyComboBoxText());
+    oSdrBaseNames->set_tooltip_text(M("TP_ICM_SDRBASE_TOOLTIP"));
+    setExpandAlignProperties(oSdrBaseNames, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+
+    for (const Glib::ustring &name : opnames) {
+        if (rtengine::hdr::isUsableSdrBaseProfile(ICCStore::getInstance()->getProfile(name))) {
+            oSdrBaseNames->append(name);
+        }
+    }
+
+    sdrBaseHBox->pack_start(*oSdrBaseNames, Gtk::PACK_EXPAND_WIDGET);
+    oNitsBox->pack_start(*sdrBaseHBox, Gtk::PACK_SHRINK);
     oProfVBox->pack_start(*oNitsBox, Gtk::PACK_SHRINK);
 
     oFrame->add(*oProfVBox);
@@ -746,6 +766,7 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
 
     wprofnamesconn = wProfNames->signal_changed().connect(sigc::mem_fun(*this, &ICMPanel::wpChanged));
     oprofnamesconn = oProfNames->signal_changed().connect(sigc::mem_fun(*this, &ICMPanel::opChanged));
+    osdrbasenamesconn = oSdrBaseNames->signal_changed().connect(sigc::mem_fun(*this, &ICMPanel::osdrBaseChanged));
     orendintentconn = oRendIntent->signal_changed().connect(sigc::mem_fun(*this, &ICMPanel::oiChanged));
     arendintentconn = aRendIntent->signal_changed().connect(sigc::mem_fun(*this, &ICMPanel::aiChanged));
     dcpillconn = dcpIll->signal_changed().connect(sigc::mem_fun(*this, &ICMPanel::dcpIlluminantChanged));
@@ -858,7 +879,15 @@ void ICMPanel::updateAbsoluteLuminance(const Glib::ustring &profile)
     const std::optional<rtengine::TransferFunction> transfer =
         rtengine::unexpressibleTransferFunction(rtengine::ICCStore::getInstance()->getProfile(profile));
 
-    oNitsBox->set_visible(transfer && rtengine::isAbsolute(*transfer));
+    oNitsBox->set_visible(static_cast<bool>(transfer));
+    oMaxNits->set_visible(transfer && rtengine::isAbsolute(*transfer));
+}
+
+void ICMPanel::osdrBaseChanged()
+{
+    if (listener) {
+        listener->panelChanged(EvOSdrBaseProfile, oSdrBaseNames->get_active_text());
+    }
 }
 
 void ICMPanel::updateRenderingIntent(const Glib::ustring &profile)
@@ -1177,6 +1206,7 @@ void ICMPanel::read(const ProcParams* pp, const ParamsEdited* pedited)
     ConnectionBlocker hsmconn_(hsmconn);
     ConnectionBlocker wprofnamesconn_(wprofnamesconn);
     ConnectionBlocker oprofnamesconn_(oprofnamesconn);
+    ConnectionBlocker osdrbasenamesconn_(osdrbasenamesconn);
     ConnectionBlocker orendintentconn_(orendintentconn);
     ConnectionBlocker arendintentconn_(arendintentconn);
     ConnectionBlocker dcpillconn_(dcpillconn);
@@ -1256,6 +1286,17 @@ void ICMPanel::read(const ProcParams* pp, const ParamsEdited* pedited)
     obpc->set_active(pp->icm.outputBPC);
     oPaperwhiteNits->setValue(pp->icm.outputPaperwhiteNits);
     oMaxNits->setValue(pp->icm.outputMaxNits);
+    oSdrBaseNames->set_active_text(pp->icm.outputSdrBaseProfile);
+
+    if (oSdrBaseNames->get_active_row_number() == -1) {
+        // Not a usable base (anymore), fall back to the default one, or whatever comes first
+        oSdrBaseNames->set_active_text(ColorManagementParams().outputSdrBaseProfile);
+
+        if (oSdrBaseNames->get_active_row_number() == -1) {
+            oSdrBaseNames->set_active(0);
+        }
+    }
+
     updateAbsoluteLuminance(oProfNames->get_active_text());
     fbw->set_active(pp->icm.fbw);
     trcExp->setEnabled(pp->icm.trcExp);
@@ -1327,6 +1368,10 @@ void ICMPanel::read(const ProcParams* pp, const ParamsEdited* pedited)
 
         if (!pedited->icm.outputProfile) {
             oProfNames->set_active_text(M("GENERAL_UNCHANGED"));
+        }
+
+        if (!pedited->icm.outputSdrBaseProfile) {
+            oSdrBaseNames->set_active_text(M("GENERAL_UNCHANGED"));
         }
 
         if (!pedited->icm.outputIntent) {
@@ -1756,6 +1801,10 @@ void ICMPanel::write(ProcParams* pp, ParamsEdited* pedited)
     pp->icm.outputPaperwhiteNits = oPaperwhiteNits->getValue();
     pp->icm.outputMaxNits = oMaxNits->getValue();
 
+    if (oSdrBaseNames->get_active_row_number() != -1 && oSdrBaseNames->get_active_text() != M("GENERAL_UNCHANGED")) {
+        pp->icm.outputSdrBaseProfile = oSdrBaseNames->get_active_text();
+    }
+
     int ointentVal = oRendIntent->getSelected();
 
     if (ointentVal >= 0 && ointentVal < RI__COUNT) {
@@ -1831,6 +1880,7 @@ void ICMPanel::write(ProcParams* pp, ParamsEdited* pedited)
         pedited->icm.outputBPC = !obpc->get_inconsistent();
         pedited->icm.outputPaperwhiteNits = oPaperwhiteNits->getEditedState();
         pedited->icm.outputMaxNits = oMaxNits->getEditedState();
+        pedited->icm.outputSdrBaseProfile = oSdrBaseNames->get_active_text() != M("GENERAL_UNCHANGED");
         pedited->icm.fbw = !fbw->get_inconsistent();
         pedited->icm.trcExp = !trcExp->get_inconsistent();
         pedited->icm.wavExp = !wavExp->get_inconsistent();
@@ -3215,6 +3265,7 @@ void ICMPanel::setBatchMode(bool batchMode)
 
     removeIfThere(this, saveRef);
     oProfNames->append(M("GENERAL_UNCHANGED"));
+    oSdrBaseNames->append(M("GENERAL_UNCHANGED"));
     oRendIntent->addEntry("template-24", M("GENERAL_UNCHANGED"));
     oRendIntent->show();
     aRendIntent->addEntry("template-24", M("GENERAL_UNCHANGED"));

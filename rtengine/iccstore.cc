@@ -56,31 +56,44 @@ namespace
 constexpr cmsInt32Number RT_TONE_CURVE_TYPE_BASE = 200;
 constexpr cmsInt32Number PQ_TONE_CURVE_TYPE = RT_TONE_CURVE_TYPE_BASE + 0;
 
-// Params[0]: the luminance of diffuse white, Params[1]: the peak nits, both relative to the 10000 cd/m2
-// limit in PQ BT.2084.
-cmsFloat64Number pqCurveEvaluator(cmsInt32Number type, const cmsFloat64Number params[10], cmsFloat64Number x)
+constexpr cmsInt32Number HLG_TONE_CURVE_TYPE = RT_TONE_CURVE_TYPE_BASE + 1;
+
+// PQ:  Params[0]: the luminance of diffuse white, Params[1]: the peak nits, both relative to the 10000 cd/m2
+//      limit in PQ BT.2084.
+// HLG: Params[0]: the luminance of diffuse white relative to the nominal 1000 cd/m2 peak of the HLG
+//      reference display. As a tone curve is per channel, the OOTF can only be approximated here by
+//      applying the system gamma per channel, which is exact for neutrals only. Where precision
+//      matters, the output path uses a linear curve and hdr::applyHlgEncoding instead.
+cmsFloat64Number transferCurveEvaluator(cmsInt32Number type, const cmsFloat64Number params[10], cmsFloat64Number x)
 {
     const double paperwhite = params[0] > 0.0 ? params[0] : 1.0;
-    const double ceiling = params[1] > 0.0 ? params[1] : 1.0;
 
     switch (type) {
         case PQ_TONE_CURVE_TYPE:
             return rtengine::Color::pq_eotf(x) / paperwhite;
 
-        case -PQ_TONE_CURVE_TYPE:
+        case -PQ_TONE_CURVE_TYPE: {
+            const double ceiling = params[1] > 0.0 ? params[1] : 1.0;
             return rtengine::Color::pq_inv_eotf(rtengine::LIM(x * paperwhite, 0.0, ceiling));
+        }
+
+        case HLG_TONE_CURVE_TYPE:
+            return std::pow(rtengine::Color::hlg_inv_oetf(x), rtengine::Color::hlg_system_gamma) / paperwhite;
+
+        case -HLG_TONE_CURVE_TYPE:
+            return rtengine::Color::hlg_oetf(std::pow(rtengine::LIM(x * paperwhite, 0.0, 1.0), 1.0 / rtengine::Color::hlg_system_gamma));
 
         default:
             return 0.0;
     }
 }
 
-cmsPluginParametricCurves pqCurvePlugin = {
+cmsPluginParametricCurves transferCurvePlugin = {
     { cmsPluginMagicNumber, 2000, cmsPluginParametricCurveSig, nullptr },
-    1,
-    { PQ_TONE_CURVE_TYPE },
-    { 2 },
-    pqCurveEvaluator
+    2,
+    { PQ_TONE_CURVE_TYPE, HLG_TONE_CURVE_TYPE },
+    { 2, 1 },
+    transferCurveEvaluator
 };
 
 cmsToneCurve* buildTransferToneCurve(rtengine::TransferFunction transfer, double paperwhiteNits, double maxNits)
@@ -94,9 +107,12 @@ cmsToneCurve* buildTransferToneCurve(rtengine::TransferFunction transfer, double
             return cmsBuildParametricToneCurve(nullptr, PQ_TONE_CURVE_TYPE, params);
         }
 
-        // Once we want to support HLG, we need to also register a parametric curve for it here
-        case rtengine::TransferFunction::HLG:
-            return nullptr;
+        case rtengine::TransferFunction::HLG: {
+            const cmsFloat64Number params[1] = {
+                rtengine::LIM(paperwhiteNits, 1.0, rtengine::Color::hlg_nominal_peak) / rtengine::Color::hlg_nominal_peak
+            };
+            return cmsBuildParametricToneCurve(nullptr, HLG_TONE_CURVE_TYPE, params);
+        }
     }
 
     return nullptr;
@@ -491,7 +507,9 @@ std::optional<rtengine::TransferFunction> rtengine::unexpressibleTransferFunctio
         return TransferFunction::PQ;
     }
 
-    //HLG would need to be matched here as well
+    if (trcMatches(curves, Color::hlg_inv_oetf)) {
+        return TransferFunction::HLG;
+    }
 
     return {};
 }
@@ -511,7 +529,7 @@ public:
     {
         //cmsErrorAction(LCMS_ERROR_SHOW);
 
-        cmsPlugin(&pqCurvePlugin);
+        cmsPlugin(&transferCurvePlugin);
 
         constexpr int N = sizeof(wpnames) / sizeof(wpnames[0]);
 
@@ -1195,8 +1213,12 @@ rtengine::ProfileContent rtengine::ICCStore::getContent(const Glib::ustring& nam
     return implementation->getContent(name);
 }
 
-cmsHPROFILE rtengine::ICCStore::createOutputProfile(const procparams::ColorManagementParams& icm) const
+cmsHPROFILE rtengine::ICCStore::createOutputProfile(const procparams::ColorManagementParams& icm, std::optional<TransferFunction>* deferredEncoding) const
 {
+    if (deferredEncoding) {
+        deferredEncoding->reset();
+    }
+
     cmsHPROFILE profile = getContent(icm.outputProfile).toProfile();
 
     if (!profile) {
@@ -1216,7 +1238,16 @@ cmsHPROFILE rtengine::ICCStore::createOutputProfile(const procparams::ColorManag
         // lookup, which clamps at 1.0 and drops everything above diffuse white. Swap in the
         // analytic equivalent, which lcms inverts in closed form.
         // Non-absolute functions will ignore the set output nits.
-        cmsToneCurve* const trc = buildTransferToneCurve(*transfer, icm.outputPaperwhiteNits, icm.outputMaxNits);
+        cmsToneCurve* trc = nullptr;
+
+        if (*transfer == TransferFunction::HLG && deferredEncoding) {
+            // The HLG OOTF works on luminance, which no per channel curve can express. So output
+            // linear light, and let the caller apply the encoding (see hdr::applyHlgEncoding).
+            trc = cmsBuildGamma(nullptr, 1.0);
+            *deferredEncoding = transfer;
+        } else {
+            trc = buildTransferToneCurve(*transfer, icm.outputPaperwhiteNits, icm.outputMaxNits);
+        }
 
         if (trc) {
             cmsWriteTag(profile, cmsSigRedTRCTag, trc);

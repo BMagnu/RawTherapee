@@ -355,6 +355,7 @@ void Options::setDefaults()
     saveFormat.saveParams = true;
     saveFormat.avifBits = 8;
     saveFormat.avifQuality = 90;
+    saveFormat.avifGainMap = false;
 
     saveFormatBatch.format = "jpg";
     saveFormatBatch.jpegQuality = 92;
@@ -366,6 +367,7 @@ void Options::setDefaults()
     saveFormatBatch.saveParams = true;
     saveFormatBatch.avifBits = 8;
     saveFormatBatch.avifQuality = 90;
+    saveFormatBatch.avifGainMap = false;
 
     savePathTemplate = "%p1/converted/%f";
     savePathFolder = "";
@@ -1134,6 +1136,10 @@ void Options::readFromFile(Glib::ustring fname)
                     saveFormat.avifQuality = keyFile.get_integer("Output", "AvifQuality");
                 }
 
+                if (keyFile.has_key("Output", "AvifGainMap")) {
+                    saveFormat.avifGainMap = keyFile.get_boolean("Output", "AvifGainMap");
+                }
+
                 if (keyFile.has_key("Output", "FormatBatch")) {
                     saveFormatBatch.format = keyFile.get_string("Output", "FormatBatch");
                 }
@@ -1172,6 +1178,10 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("Output", "AvifQualityBatch")) {
                     saveFormatBatch.avifQuality = keyFile.get_integer("Output", "AvifQualityBatch");
+                }
+
+                if (keyFile.has_key("Output", "AvifGainMapBatch")) {
+                    saveFormatBatch.avifGainMap = keyFile.get_boolean("Output", "AvifGainMapBatch");
                 }
 
                 if (keyFile.has_key("Output", "Path")) {
@@ -2598,6 +2608,7 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_boolean("Output", "SaveProcParams", saveFormat.saveParams);
         keyFile.set_integer("Output", "AvifBps", saveFormat.avifBits);
         keyFile.set_integer("Output", "AvifQuality", saveFormat.avifQuality);
+        keyFile.set_boolean("Output", "AvifGainMap", saveFormat.avifGainMap);
 
         keyFile.set_string("Output", "FormatBatch", saveFormatBatch.format);
         keyFile.set_integer("Output", "JpegQualityBatch", saveFormatBatch.jpegQuality);
@@ -2609,6 +2620,7 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_boolean("Output", "SaveProcParamsBatch", saveFormatBatch.saveParams);
         keyFile.set_integer("Output", "AvifBpsBatch", saveFormatBatch.avifBits);
         keyFile.set_integer("Output", "AvifQualityBatch", saveFormatBatch.avifQuality);
+        keyFile.set_boolean("Output", "AvifGainMapBatch", saveFormatBatch.avifGainMap);
 
         keyFile.set_string("Output", "PathTemplate", savePathTemplate);
         keyFile.set_string("Output", "PathFolder", savePathFolder);

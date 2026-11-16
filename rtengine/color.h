@@ -1278,6 +1278,36 @@ static inline void Lab2XYZ(vfloat L, vfloat a, vfloat b, vfloat &x, vfloat &y, v
         return pow((c1 + c2 * p) / (1.0 + c3 * p), m2);
     }
 
+    // ARIB STD-B67 / BT.2100 Hybrid Log-Gamma constants
+    static constexpr double hlg_a = 0.17883277;
+    static constexpr double hlg_b = 0.28466892; // 1 - 4a
+    static constexpr double hlg_c = 0.55991073; // 0.5 - a * ln(4a)
+    // Nominal peak luminance of the HLG reference display, and the system gamma that goes with it
+    static constexpr double hlg_nominal_peak = 1000.0;
+    static constexpr double hlg_system_gamma = 1.2;
+
+    /**
+    * @brief BT.2100 HLG OETF
+    * @param x normalized linear scene light [0 ; 1]
+    * @return the encoded value [0 ; 1]
+    */
+    static inline double hlg_oetf(double x)
+    {
+        x = rtengine::max(x, 0.0);
+        return x <= 1.0 / 12.0 ? std::sqrt(3.0 * x) : hlg_a * std::log(12.0 * x - hlg_b) + hlg_c;
+    }
+
+    /**
+    * @brief BT.2100 HLG inverse OETF
+    * @param x the encoded value [0 ; 1]
+    * @return normalized linear scene light [0 ; 1]
+    */
+    static inline double hlg_inv_oetf(double x)
+    {
+        x = rtengine::max(x, 0.0);
+        return x <= 0.5 ? x * x / 3.0 : (std::exp((x - hlg_c) / hlg_a) + hlg_b) / 12.0;
+    }
+
     /**
     * @brief Get the gamma value for Gamma=1.3 Slope=2
     * @param x red, green or blue channel's value [0 ; 1]

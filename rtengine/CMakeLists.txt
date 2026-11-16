@@ -51,6 +51,7 @@ set(RTENGINESOURCEFILES
     gauss.cc
     green_equil_RT.cc
     guidedfilter.cc
+    hdr.cc
     hilite_recon.cc
     histmatching.cc
     hphd_demosaic_RT.cc

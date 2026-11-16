@@ -122,7 +122,13 @@ SaveFormatPanel::SaveFormatPanel () : listener (nullptr)
     avifQual->set_tooltip_text (M("SAVEDLG_AVIFQUAL_TOOLTIP"));
     avifQual->setAdjusterListener (this);
 
+    avifGainMap = Gtk::manage (new Gtk::CheckButton (M("SAVEDLG_AVIFGAINMAP")) );
+    setExpandAlignProperties(avifGainMap, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    avifGainMap->set_tooltip_text (M("SAVEDLG_AVIFGAINMAP_TOOLTIP"));
+    avifGainMap->signal_toggled().connect( sigc::mem_fun(*this, &SaveFormatPanel::formatChanged));
+
     avifOpts->attach(*avifQual, 0, 0, 1, 1);
+    avifOpts->attach(*avifGainMap, 0, 1, 1, 1);
     avifOpts->show_all ();
 
 
@@ -185,6 +191,7 @@ void SaveFormatPanel::init (const SaveFormat &sf)
     tiffUncompressed->set_active(sf.tiffUncompressed);
     bigTiff->set_active(sf.bigTiff);
     avifQual->setValue(sf.avifQuality);
+    avifGainMap->set_active(sf.avifGainMap);
 
     listener = tmp;
 }
@@ -205,6 +212,7 @@ SaveFormat SaveFormatPanel::getFormat ()
     sf.bigTiff = bigTiff->get_active();
     sf.saveParams = savesPP->get_active();
     sf.avifQuality = avifQual->getValue();
+    sf.avifGainMap = avifGainMap->get_active();
 
     return sf;
 }

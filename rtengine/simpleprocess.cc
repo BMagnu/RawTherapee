@@ -27,6 +27,7 @@
 #include "curves.h"
 #include "dcp.h"
 #include "guidedfilter.h"
+#include "hdr.h"
 #include "iccstore.h"
 #include "imagefloat.h"
 #include "imagesource.h"
@@ -2213,6 +2214,20 @@ private:
 
                 ProfileContent pc = ICCStore::getInstance()->getContent(params.icm.outputProfile);
                 readyImg->setOutputProfile(pc);
+
+                if (hdr::isHdrOutput(params.icm)) {
+                    // Everything needed to derive an SDR rendering from the HDR output, should the
+                    // format want one (AVIF gain maps).
+                    ProfileContent base = ICCStore::getInstance()->getContent(params.icm.outputSdrBaseProfile);
+
+                    if (base.getData().empty()) {
+                        if (const cmsHPROFILE shared = ICCStore::getInstance()->getProfile(params.icm.outputSdrBaseProfile)) {
+                            base = ProfileContent(shared);
+                        }
+                    }
+
+                    readyImg->setHdrInfo(base, params.icm.outputPaperwhiteNits, params.icm.outputMaxNits);
+                }
             }
         } else {
             // No ICM

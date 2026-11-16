@@ -2508,7 +2508,8 @@ ColorManagementParams::ColorManagementParams() :
     outputIntent(RI_RELATIVE),
     outputBPC(true),
     outputPaperwhiteNits(203.0),
-    outputMaxNits(10000.0)
+    outputMaxNits(10000.0),
+    outputSdrBaseProfile("RTv4_sRGB")
 {
 }
 
@@ -2576,7 +2577,8 @@ bool ColorManagementParams::operator ==(const ColorManagementParams& other) cons
         && outputIntent == other.outputIntent
         && outputBPC == other.outputBPC
         && outputPaperwhiteNits == other.outputPaperwhiteNits
-        && outputMaxNits == other.outputMaxNits;
+        && outputMaxNits == other.outputMaxNits
+        && outputSdrBaseProfile == other.outputSdrBaseProfile;
 }
 
 void ColorManagementParams::getCurves(
@@ -3600,6 +3602,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->icm.outputBPC, "Color Management", "OutputBPC", icm.outputBPC, keyFile);
         saveToKeyfile(!pedited || pedited->icm.outputPaperwhiteNits, "Color Management", "OutputPaperwhiteNits", icm.outputPaperwhiteNits, keyFile);
         saveToKeyfile(!pedited || pedited->icm.outputMaxNits, "Color Management", "OutputMaxNits", icm.outputMaxNits, keyFile);
+        saveToKeyfile(!pedited || pedited->icm.outputSdrBaseProfile, "Color Management", "OutputSdrBaseProfile", icm.outputSdrBaseProfile, keyFile);
 
         saveWaveletParams(keyFile, wavelet, pedited);
 
@@ -4898,6 +4901,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
             assignFromKeyfile(keyFile, "Color Management", "OutputBPC", icm.outputBPC, pedited->icm.outputBPC);
             assignFromKeyfile(keyFile, "Color Management", "OutputPaperwhiteNits", icm.outputPaperwhiteNits, pedited->icm.outputPaperwhiteNits);
             assignFromKeyfile(keyFile, "Color Management", "OutputMaxNits", icm.outputMaxNits, pedited->icm.outputMaxNits);
+            assignFromKeyfile(keyFile, "Color Management", "OutputSdrBaseProfile", icm.outputSdrBaseProfile, pedited->icm.outputSdrBaseProfile);
         }
 
         loadWaveletParams(keyFile, wavelet, pedited, ppVersion);

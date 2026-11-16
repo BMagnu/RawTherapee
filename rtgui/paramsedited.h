@@ -1536,6 +1536,7 @@ struct ColorManagementParamsEdited {
     bool outputBPC;
     bool outputPaperwhiteNits;
     bool outputMaxNits;
+    bool outputSdrBaseProfile;
 };
 
 struct WaveletParamsEdited {

@@ -1153,6 +1153,7 @@ struct ColorManagementParams {
     bool outputBPC;
     double outputPaperwhiteNits;
     double outputMaxNits;
+    Glib::ustring outputSdrBaseProfile; // Primaries and curve of the SDR fallback (gain map base) of HDR output
 
     static const Glib::ustring NoICMString;
     static const Glib::ustring NoProfileString;

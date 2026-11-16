@@ -95,7 +95,11 @@ public:
     cmsHPROFILE      getStdProfile(const Glib::ustring& name) const;
     ProfileContent   getContent(const Glib::ustring& name) const;
 
-    cmsHPROFILE      createOutputProfile(const procparams::ColorManagementParams& icm) const;
+    // A copy of the output profile, owned by the caller, whose curves can encode values above diffuse
+    // white for HDR transfer functions. When `deferredEncoding` is given and the transfer function
+    // can't be expressed per channel (HLG), the profile outputs linear light instead and
+    // `deferredEncoding` names the encoding the caller still has to apply.
+    cmsHPROFILE      createOutputProfile(const procparams::ColorManagementParams& icm, std::optional<TransferFunction>* deferredEncoding = nullptr) const;
 
     Glib::ustring getDefaultMonitorProfileName() const;
     void setDefaultMonitorProfileName(const Glib::ustring &name);

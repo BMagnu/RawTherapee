@@ -129,6 +129,7 @@ struct SaveFormat {
     bool saveParams;
     int avifBits;  // 8, 10 or 12
     int avifQuality;  // 100 is lossless
+    bool avifGainMap = false;  // For HDR output: store an SDR base image plus an ISO 21496-1 gain map
 };
 
 enum ThFileType {FT_Invalid = -1, FT_None = 0, FT_Raw = 1, FT_Jpeg = 2, FT_Tiff = 3, FT_Png = 4, FT_Custom = 5, FT_Tiff16 = 6, FT_Png16 = 7, FT_Custom16 = 8};

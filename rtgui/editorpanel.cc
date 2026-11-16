@@ -2041,7 +2041,7 @@ bool EditorPanel::idle_saveImage (ProgressConnector<rtengine::IImagefloat*> *pc,
             ld->startFunc (sigc::bind (sigc::mem_fun (img, &rtengine::IImagefloat::saveAsJPEG), fname, sf.jpegQuality, sf.jpegSubSamp),
                            sigc::bind (sigc::mem_fun (*this, &EditorPanel::idle_imageSaved), ld, img, fname, sf, pparams));
         else if (sf.format == "avif")
-            ld->startFunc (sigc::bind (sigc::mem_fun (img, &rtengine::IImagefloat::saveAsAVIF), fname, sf.avifBits, sf.avifQuality),
+            ld->startFunc (sigc::bind (sigc::mem_fun (img, &rtengine::IImagefloat::saveAsAVIF), fname, sf.avifBits, sf.avifQuality, sf.avifGainMap),
                            sigc::bind (sigc::mem_fun (*this, &EditorPanel::idle_imageSaved), ld, img, fname, sf, pparams));
         else {
             delete ld;
@@ -2304,7 +2304,7 @@ bool EditorPanel::saveImmediately (const Glib::ustring &filename, const SaveForm
     } else if (sf.format == "jpg") {
         err = img->saveAsJPEG (filename, sf.jpegQuality, sf.jpegSubSamp);
     } else if (sf.format == "avif") {
-        err = img->saveAsAVIF (filename, sf.avifBits, sf.avifQuality);
+        err = img->saveAsAVIF (filename, sf.avifBits, sf.avifQuality, sf.avifGainMap);
     } else {
         err = 1;
     }

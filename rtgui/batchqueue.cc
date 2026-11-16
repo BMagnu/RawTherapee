@@ -314,7 +314,7 @@ bool BatchQueue::saveBatchQueue ()
         // The column's header is mandatory (the first line will be skipped when loaded)
         file << "input image full path|param file full path|output image full path|file format|jpeg quality|jpeg subsampling|"
              << "png bit depth|png compression|tiff bit depth|tiff is float|uncompressed tiff|save output params|force format options|fast export|"
-             << "big tiff|avif bit depth|avif quality|<end of line>"
+             << "big tiff|avif bit depth|avif quality|avif gain map|<end of line>"
              << std::endl;
 
         // method is already running with entryLock, so no need to lock again
@@ -337,6 +337,7 @@ bool BatchQueue::saveBatchQueue ()
                  << entry->fast_pipeline << '|'
                  << saveFormat.bigTiff << '|'
                  << saveFormat.avifBits << '|' << saveFormat.avifQuality << '|'
+                 << saveFormat.avifGainMap << '|'
                  << std::endl;
         }
     }
@@ -408,6 +409,7 @@ bool BatchQueue::loadBatchQueue ()
             const auto bigTiff = nextIntOr (options.saveFormat.bigTiff);
             const auto avifBits = nextIntOr (options.saveFormat.avifBits);
             const auto avifQuality = nextIntOr (options.saveFormat.avifQuality);
+            const auto avifGainMap = nextIntOr (options.saveFormat.avifGainMap);
 
             rtengine::procparams::ProcParams pparams;
 
@@ -450,6 +452,7 @@ bool BatchQueue::loadBatchQueue ()
                 saveFormat.bigTiff = bigTiff != 0;
                 saveFormat.avifBits = avifBits;
                 saveFormat.avifQuality = avifQuality;
+                saveFormat.avifGainMap = avifGainMap != 0;
                 saveFormat.saveParams = saveParams != 0;
                 entry->forceFormatOpts = forceFormatOpts != 0;
             } else {
@@ -803,7 +806,7 @@ rtengine::ProcessingJob* BatchQueue::imageReady(rtengine::IImagefloat* img)
         } else if (saveFormat.format == "jpg") {
             err = img->saveAsJPEG (fname, saveFormat.jpegQuality, saveFormat.jpegSubSamp);
         } else if (saveFormat.format == "avif") {
-            err = img->saveAsAVIF (fname, saveFormat.avifBits, saveFormat.avifQuality);
+            err = img->saveAsAVIF (fname, saveFormat.avifBits, saveFormat.avifQuality, saveFormat.avifGainMap);
         }
 
         delete img;

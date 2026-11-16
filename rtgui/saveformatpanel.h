@@ -46,6 +46,7 @@ protected:
     Gtk::Grid*          jpegOpts;
     Gtk::Label*         jpegSubSampLabel;
     Adjuster*           avifQual;
+    Gtk::CheckButton*   avifGainMap;
     Gtk::Grid*          avifOpts;
     FormatChangeListener* listener;
     Gtk::CheckButton*   savesPP;
