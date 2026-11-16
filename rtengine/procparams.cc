@@ -2509,7 +2509,8 @@ ColorManagementParams::ColorManagementParams() :
     outputBPC(true),
     outputPaperwhiteNits(203.0),
     outputMaxNits(10000.0),
-    outputSdrBaseProfile("RTv4_sRGB")
+    outputSdrBaseProfile("RTv4_sRGB"),
+    outputSdrFallback(SdrFallback::CLIP)
 {
 }
 
@@ -2578,7 +2579,8 @@ bool ColorManagementParams::operator ==(const ColorManagementParams& other) cons
         && outputBPC == other.outputBPC
         && outputPaperwhiteNits == other.outputPaperwhiteNits
         && outputMaxNits == other.outputMaxNits
-        && outputSdrBaseProfile == other.outputSdrBaseProfile;
+        && outputSdrBaseProfile == other.outputSdrBaseProfile
+        && outputSdrFallback == other.outputSdrFallback;
 }
 
 void ColorManagementParams::getCurves(
@@ -3603,6 +3605,17 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->icm.outputPaperwhiteNits, "Color Management", "OutputPaperwhiteNits", icm.outputPaperwhiteNits, keyFile);
         saveToKeyfile(!pedited || pedited->icm.outputMaxNits, "Color Management", "OutputMaxNits", icm.outputMaxNits, keyFile);
         saveToKeyfile(!pedited || pedited->icm.outputSdrBaseProfile, "Color Management", "OutputSdrBaseProfile", icm.outputSdrBaseProfile, keyFile);
+        saveToKeyfile(
+            !pedited || pedited->icm.outputSdrFallback,
+            "Color Management",
+            "OutputSdrFallback",
+            {
+                {ColorManagementParams::SdrFallback::CLIP, "Clip"},
+                {ColorManagementParams::SdrFallback::ROLL_OFF, "RollOff"}
+            },
+            icm.outputSdrFallback,
+            keyFile
+        );
 
         saveWaveletParams(keyFile, wavelet, pedited);
 
@@ -4902,6 +4915,17 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
             assignFromKeyfile(keyFile, "Color Management", "OutputPaperwhiteNits", icm.outputPaperwhiteNits, pedited->icm.outputPaperwhiteNits);
             assignFromKeyfile(keyFile, "Color Management", "OutputMaxNits", icm.outputMaxNits, pedited->icm.outputMaxNits);
             assignFromKeyfile(keyFile, "Color Management", "OutputSdrBaseProfile", icm.outputSdrBaseProfile, pedited->icm.outputSdrBaseProfile);
+            assignFromKeyfile(
+                keyFile,
+                "Color Management",
+                "OutputSdrFallback",
+                {
+                    {"Clip", ColorManagementParams::SdrFallback::CLIP},
+                    {"RollOff", ColorManagementParams::SdrFallback::ROLL_OFF}
+                },
+                icm.outputSdrFallback,
+                pedited->icm.outputSdrFallback
+            );
         }
 
         loadWaveletParams(keyFile, wavelet, pedited, ppVersion);

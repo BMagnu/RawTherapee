@@ -53,6 +53,7 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
     EvOPaperwhiteNits = m->newEvent(OUTPUTPROFILE, "HISTORY_MSG_ICM_PAPERWHITE");
     EvOMaxNits = m->newEvent(OUTPUTPROFILE, "HISTORY_MSG_ICM_MAXNITS");
     EvOSdrBaseProfile = m->newEvent(OUTPUTPROFILE, "HISTORY_MSG_ICM_SDRBASE");
+    EvOSdrFallback = m->newEvent(OUTPUTPROFILE, "HISTORY_MSG_ICM_SDRFALLBACK");
     EvICMprimariMethod = m->newEvent(GAMMA, "HISTORY_MSG_ICM_OUTPUT_PRIMARIES");
     EvICMprofileMethod = m->newEvent(GAMMA, "HISTORY_MSG_ICM_OUTPUT_TYPE");
     EvICMtempMethod = m->newEvent(GAMMA, "HISTORY_MSG_ICM_OUTPUT_TEMP");
@@ -727,6 +728,20 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
 
     sdrBaseHBox->pack_start(*oSdrBaseNames, Gtk::PACK_EXPAND_WIDGET);
     oNitsBox->pack_start(*sdrBaseHBox, Gtk::PACK_SHRINK);
+
+    // How the SDR rendering (SDR fallback, and the non-HDR view) is derived from the HDR image
+    Gtk::Box* sdrFallbackHBox = Gtk::manage(new Gtk::Box());
+    Gtk::Label* sdrFallbackLbl = Gtk::manage(new Gtk::Label(M("TP_ICM_SDRFALLBACK")));
+    sdrFallbackHBox->pack_start(*sdrFallbackLbl, Gtk::PACK_SHRINK, 4);
+    oSdrFallback = Gtk::manage(new MyComboBoxText());
+    oSdrFallback->set_tooltip_markup(M("TP_ICM_SDRFALLBACK_TOOLTIP"));
+    setExpandAlignProperties(oSdrFallback, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    // Same order as ColorManagementParams::SdrFallback
+    oSdrFallback->append(M("TP_ICM_SDRFALLBACK_CLIP"));
+    oSdrFallback->append(M("TP_ICM_SDRFALLBACK_ROLLOFF"));
+    oSdrFallback->set_active(0);
+    sdrFallbackHBox->pack_start(*oSdrFallback, Gtk::PACK_EXPAND_WIDGET);
+    oNitsBox->pack_start(*sdrFallbackHBox, Gtk::PACK_SHRINK);
     oProfVBox->pack_start(*oNitsBox, Gtk::PACK_SHRINK);
 
     oFrame->add(*oProfVBox);
@@ -767,6 +782,7 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
     wprofnamesconn = wProfNames->signal_changed().connect(sigc::mem_fun(*this, &ICMPanel::wpChanged));
     oprofnamesconn = oProfNames->signal_changed().connect(sigc::mem_fun(*this, &ICMPanel::opChanged));
     osdrbasenamesconn = oSdrBaseNames->signal_changed().connect(sigc::mem_fun(*this, &ICMPanel::osdrBaseChanged));
+    osdrfallbackconn = oSdrFallback->signal_changed().connect(sigc::mem_fun(*this, &ICMPanel::osdrFallbackChanged));
     orendintentconn = oRendIntent->signal_changed().connect(sigc::mem_fun(*this, &ICMPanel::oiChanged));
     arendintentconn = aRendIntent->signal_changed().connect(sigc::mem_fun(*this, &ICMPanel::aiChanged));
     dcpillconn = dcpIll->signal_changed().connect(sigc::mem_fun(*this, &ICMPanel::dcpIlluminantChanged));
@@ -887,6 +903,13 @@ void ICMPanel::osdrBaseChanged()
 {
     if (listener) {
         listener->panelChanged(EvOSdrBaseProfile, oSdrBaseNames->get_active_text());
+    }
+}
+
+void ICMPanel::osdrFallbackChanged()
+{
+    if (listener) {
+        listener->panelChanged(EvOSdrFallback, oSdrFallback->get_active_text());
     }
 }
 
@@ -1207,6 +1230,7 @@ void ICMPanel::read(const ProcParams* pp, const ParamsEdited* pedited)
     ConnectionBlocker wprofnamesconn_(wprofnamesconn);
     ConnectionBlocker oprofnamesconn_(oprofnamesconn);
     ConnectionBlocker osdrbasenamesconn_(osdrbasenamesconn);
+    ConnectionBlocker osdrfallbackconn_(osdrfallbackconn);
     ConnectionBlocker orendintentconn_(orendintentconn);
     ConnectionBlocker arendintentconn_(arendintentconn);
     ConnectionBlocker dcpillconn_(dcpillconn);
@@ -1297,6 +1321,7 @@ void ICMPanel::read(const ProcParams* pp, const ParamsEdited* pedited)
         }
     }
 
+    oSdrFallback->set_active(static_cast<int>(pp->icm.outputSdrFallback));
     updateAbsoluteLuminance(oProfNames->get_active_text());
     fbw->set_active(pp->icm.fbw);
     trcExp->setEnabled(pp->icm.trcExp);
@@ -1372,6 +1397,10 @@ void ICMPanel::read(const ProcParams* pp, const ParamsEdited* pedited)
 
         if (!pedited->icm.outputSdrBaseProfile) {
             oSdrBaseNames->set_active_text(M("GENERAL_UNCHANGED"));
+        }
+
+        if (!pedited->icm.outputSdrFallback) {
+            oSdrFallback->set_active_text(M("GENERAL_UNCHANGED"));
         }
 
         if (!pedited->icm.outputIntent) {
@@ -1805,6 +1834,10 @@ void ICMPanel::write(ProcParams* pp, ParamsEdited* pedited)
         pp->icm.outputSdrBaseProfile = oSdrBaseNames->get_active_text();
     }
 
+    if (oSdrFallback->get_active_row_number() == 0 || oSdrFallback->get_active_row_number() == 1) {
+        pp->icm.outputSdrFallback = static_cast<ColorManagementParams::SdrFallback>(oSdrFallback->get_active_row_number());
+    }
+
     int ointentVal = oRendIntent->getSelected();
 
     if (ointentVal >= 0 && ointentVal < RI__COUNT) {
@@ -1881,6 +1914,7 @@ void ICMPanel::write(ProcParams* pp, ParamsEdited* pedited)
         pedited->icm.outputPaperwhiteNits = oPaperwhiteNits->getEditedState();
         pedited->icm.outputMaxNits = oMaxNits->getEditedState();
         pedited->icm.outputSdrBaseProfile = oSdrBaseNames->get_active_text() != M("GENERAL_UNCHANGED");
+        pedited->icm.outputSdrFallback = oSdrFallback->get_active_text() != M("GENERAL_UNCHANGED");
         pedited->icm.fbw = !fbw->get_inconsistent();
         pedited->icm.trcExp = !trcExp->get_inconsistent();
         pedited->icm.wavExp = !wavExp->get_inconsistent();
@@ -3266,6 +3300,7 @@ void ICMPanel::setBatchMode(bool batchMode)
     removeIfThere(this, saveRef);
     oProfNames->append(M("GENERAL_UNCHANGED"));
     oSdrBaseNames->append(M("GENERAL_UNCHANGED"));
+    oSdrFallback->append(M("GENERAL_UNCHANGED"));
     oRendIntent->addEntry("template-24", M("GENERAL_UNCHANGED"));
     oRendIntent->show();
     aRendIntent->addEntry("template-24", M("GENERAL_UNCHANGED"));

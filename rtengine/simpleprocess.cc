@@ -2226,7 +2226,7 @@ private:
                         }
                     }
 
-                    readyImg->setHdrInfo(base, params.icm.outputPaperwhiteNits, params.icm.outputMaxNits);
+                    readyImg->setHdrInfo(base, params.icm.outputPaperwhiteNits, params.icm.outputMaxNits, params.icm.outputSdrFallback);
                 }
             }
         } else {

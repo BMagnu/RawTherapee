@@ -376,6 +376,169 @@ void computePreview(const LabImage& lab, int cx, int cy, int cw, int ch, const p
     }
 }
 
+SdrRendering sdrRendering(TransferFunction transfer, double paperwhiteNits, double maxNits, procparams::ColorManagementParams::SdrFallback mode, cmsHPROFILE baseProfile)
+{
+    SdrRendering rendering;
+    rendering.mode = mode;
+    rendering.peak = rtengine::max(peakNits(transfer, maxNits) / LIM(paperwhiteNits, 1.0, 10000.0), 1.0);
+    rendering.baseLuma = profileLuma(baseProfile);
+    return rendering;
+}
+
+namespace
+{
+
+// Values up to this fraction of SDR white are left alone by the roll-off, so midtones look the same in SDR
+// as in HDR. Above, the shoulder compresses everything up to the output's peak into the rest.
+constexpr double ROLL_OFF_KNEE = 0.75;
+
+// Extended Reinhard shoulder above the knee: continuous slope at the knee, and `peak` lands exactly on 1
+double shoulder(double v, double peak)
+{
+    if (v <= ROLL_OFF_KNEE) {
+        return v;
+    }
+
+    const double range = 1.0 - ROLL_OFF_KNEE;
+    const double x = (v - ROLL_OFF_KNEE) / range;
+    const double white = rtengine::max((peak - ROLL_OFF_KNEE) / range, 1e-6);
+    return ROLL_OFF_KNEE + range * rtengine::min(x * (1.0 + x / (white * white)) / (1.0 + x), 1.0);
+}
+
+void rollOff(const SdrRendering& rendering, double rgb[3])
+{
+    // The shoulder acts on the largest channel, and all channels are scaled alike, which keeps hue and
+    // saturation: bright saturated colours stay saturated, at the cost of some of their luminance. (Mapping
+    // luminance instead would have to desaturate them to almost white, as saturated primaries can only
+    // reach a fraction of SDR white's luminance.)
+    const double maxRgb = rtengine::max(rgb[0], rgb[1], rgb[2]);
+
+    if (!(maxRgb > 0.0)) {
+        rgb[0] = rgb[1] = rgb[2] = 0.0;
+        return;
+    }
+
+    const double scale = shoulder(maxRgb, rendering.peak) / maxRgb;
+
+    for (int c = 0; c < 3; ++c) {
+        rgb[c] *= scale;
+    }
+
+    // Colours outside the SDR gamut have negative channels left. Desaturate those towards grey of the same
+    // luminance, rather than clipping per channel, which would shift their hue. Moving towards grey only
+    // lowers the largest channel, so nothing goes above 1.
+    const std::array<double, 3>& luma = rendering.baseLuma;
+    const double y = rtengine::max(luma[0] * rgb[0] + luma[1] * rgb[1] + luma[2] * rgb[2], 0.0);
+    double saturation = 1.0;
+
+    for (int c = 0; c < 3; ++c) {
+        if (rgb[c] < 0.0) {
+            saturation = rtengine::min(saturation, y / (y - rgb[c]));
+        }
+    }
+
+    for (int c = 0; c < 3; ++c) {
+        rgb[c] = LIM(y + saturation * (rgb[c] - y), 0.0, 1.0);
+    }
+}
+
+}
+
+void sdrFromHdrLinear(const SdrRendering& rendering, const Matrix3& hdrToBase, const float in[3], float out[3])
+{
+    double rgb[3];
+
+    for (int c = 0; c < 3; ++c) {
+        rgb[c] = hdrToBase[c][0] * in[0] + hdrToBase[c][1] * in[1] + hdrToBase[c][2] * in[2];
+    }
+
+    switch (rendering.mode) {
+        case procparams::ColorManagementParams::SdrFallback::CLIP:
+            for (int c = 0; c < 3; ++c) {
+                rgb[c] = LIM(rgb[c], 0.0, 1.0);
+            }
+
+            break;
+
+        case procparams::ColorManagementParams::SdrFallback::ROLL_OFF:
+            rollOff(rendering, rgb);
+            break;
+    }
+
+    for (int c = 0; c < 3; ++c) {
+        out[c] = rgb[c];
+    }
+}
+
+bool needsSdrRendering(const procparams::ColorManagementParams& icm)
+{
+    return icm.outputSdrFallback != procparams::ColorManagementParams::SdrFallback::CLIP && isHdrOutput(icm);
+}
+
+void renderSdr(LabImage& lab, const procparams::ColorManagementParams& icm, bool multiThread)
+{
+    const std::optional<TransferFunction> transfer = outputTransferFunction(icm);
+
+    if (!transfer) {
+        return;
+    }
+
+    const ICCStore* const store = ICCStore::getInstance();
+    const cmsHPROFILE outProfile = store->getProfile(icm.outputProfile);
+    cmsHPROFILE baseProfile = store->getProfile(icm.outputSdrBaseProfile);
+    Matrix3 outToXyz, xyzToOut, baseToXyz, outToBase;
+
+    if (!profileMatrix(baseProfile, baseToXyz)) {
+        // Without a usable base, render into the HDR output's own primaries
+        baseProfile = outProfile;
+    }
+
+    if (
+        !profileMatrix(outProfile, outToXyz)
+        || !invertMatrix(outToXyz, xyzToOut)
+        || !profileMatrix(baseProfile, baseToXyz)
+        || !conversionMatrix(outProfile, baseProfile, outToBase)
+    ) {
+        return;
+    }
+
+    const std::array<double, 3> outLuma = profileLuma(outProfile);
+    const SdrRendering rendering = sdrRendering(*transfer, icm.outputPaperwhiteNits, icm.outputMaxNits, icm.outputSdrFallback, baseProfile);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic, 16) if (multiThread)
+#endif
+
+    for (int i = 0; i < lab.H; ++i) {
+        for (int j = 0; j < lab.W; ++j) {
+            float fx, fy, fz;
+            Color::Lab2XYZ(lab.L[i][j], lab.a[i][j], lab.b[i][j], fx, fy, fz);
+            const double xyz[3] = {fx / 65535.0, fy / 65535.0, fz / 65535.0};
+            double rgb[3];
+
+            for (int c = 0; c < 3; ++c) {
+                rgb[c] = xyzToOut[c][0] * xyz[0] + xyzToOut[c][1] * xyz[1] + xyzToOut[c][2] * xyz[2];
+            }
+
+            // Through the output's encoding and back, like the HDR image the export renders the SDR one from
+            encode(*transfer, icm.outputPaperwhiteNits, icm.outputMaxNits, outLuma.data(), rgb);
+            decode(*transfer, icm.outputPaperwhiteNits, outLuma.data(), rgb);
+
+            const float hdrRgb[3] = {static_cast<float>(rgb[0]), static_cast<float>(rgb[1]), static_cast<float>(rgb[2])};
+            float sdr[3];
+            sdrFromHdrLinear(rendering, outToBase, hdrRgb, sdr);
+
+            double out[3];
+
+            for (int c = 0; c < 3; ++c) {
+                out[c] = 65535.0 * (baseToXyz[c][0] * sdr[0] + baseToXyz[c][1] * sdr[1] + baseToXyz[c][2] * sdr[2]);
+            }
+
+            Color::XYZ2Lab(out[0], out[1], out[2], lab.L[i][j], lab.a[i][j], lab.b[i][j]);
+        }
+    }
+}
+
 bool conversionMatrix(cmsHPROFILE from, cmsHPROFILE to, Matrix3& fromToTo)
 {
     Matrix3 fromToXyz, toToXyz, xyzToTo;

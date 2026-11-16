@@ -16,6 +16,8 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <memory>
+
 #include <glibmm/ustring.h>
 
 #include "alignedbuffer.h"
@@ -170,6 +172,16 @@ vfloat gammalog(vfloat x, vfloat p, vfloat s, vfloat g3, vfloat g4)
 // otherwise divide by 327.68, convert to xyz and apply the sRGB transform, before converting with gamma2curve
 void ImProcFunctions::lab2monitorRgb(LabImage* lab, Image8* image)
 {
+    // With HDR output, the non-HDR view shows the same SDR rendering as the SDR fallback of the export.
+    // The plain monitor transform clips per channel, which already is the CLIP rendering.
+    std::unique_ptr<LabImage> sdrLab;
+
+    if (params && hdr::needsSdrRendering(params->icm)) {
+        sdrLab.reset(new LabImage(*lab, multiThread));
+        hdr::renderSdr(*sdrLab, params->icm, multiThread);
+        lab = sdrLab.get();
+    }
+
     if (monitorTransform) {
 
         const int W = lab->W;

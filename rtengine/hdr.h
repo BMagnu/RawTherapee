@@ -24,6 +24,7 @@
 #include <lcms2.h>
 
 #include "iccstore.h"
+#include "procparams.h"
 
 // Shared helpers for HDR output (PQ / HLG), used by export, the gain map writer and, in the future,
 // by the clipping indicators and the HDR preview. All "linear" values here are display light
@@ -34,11 +35,6 @@ namespace rtengine
 
 class Imagefloat;
 class LabImage;
-
-namespace procparams
-{
-struct ColorManagementParams;
-}
 
 namespace hdr
 {
@@ -73,18 +69,30 @@ std::array<double, 3> profileLuma(cmsHPROFILE profile);
 // primaries. Both must be matrix-shaper RGB profiles.
 bool conversionMatrix(cmsHPROFILE from, cmsHPROFILE to, Matrix3& fromToTo);
 
-// The single definition of the SDR fallback rendering: linear light relative to paper white in
-// the HDR primaries, to linear light in the SDR base primaries.
-// Currently a hard clip to [0 ; 1] per channel.
-// TODO: make this configurable (e.g. a highlight roll-off / gamut compression). Should it become
-// configurable, the SDR view of the (planned) HDR preview must follow the same setting.
-inline void sdrFromHdrLinear(const Matrix3& hdrToBase, const float in[3], float out[3])
-{
-    for (int c = 0; c < 3; ++c) {
-        const double v = hdrToBase[c][0] * in[0] + hdrToBase[c][1] * in[1] + hdrToBase[c][2] * in[2];
-        out[c] = v < 0.0 ? 0.f : (v > 1.0 ? 1.f : static_cast<float>(v));
-    }
-}
+// How HDR output is rendered for SDR: the image in the gain map base, and what the non-HDR view shows.
+// This is the single definition of it; the export and the preview must both go through it.
+struct SdrRendering {
+    procparams::ColorManagementParams::SdrFallback mode = procparams::ColorManagementParams::SdrFallback::CLIP;
+    // Brightest light level the HDR output encodes, relative to paper white: the end of the roll-off
+    double peak = 1.0;
+    // Luma weights of the SDR base primaries
+    std::array<double, 3> baseLuma = {0.2126, 0.7152, 0.0722};
+};
+
+// The SDR rendering settings for the given HDR output settings and SDR base profile.
+SdrRendering sdrRendering(TransferFunction transfer, double paperwhiteNits, double maxNits, procparams::ColorManagementParams::SdrFallback mode, cmsHPROFILE baseProfile);
+
+// Renders linear light relative to paper white in the HDR primaries into linear light in the SDR base
+// primaries, within [0 ; 1].
+void sdrFromHdrLinear(const SdrRendering& rendering, const Matrix3& hdrToBase, const float in[3], float out[3]);
+
+// Whether the non-HDR view must be rendered through sdrFromHdrLinear rather than shown by the usual
+// per channel clipping monitor transform, which already matches the CLIP rendering.
+bool needsSdrRendering(const procparams::ColorManagementParams& icm);
+
+// Replaces, in place, the colours of a Lab image (as the pipeline produces it) by their SDR rendering for
+// the given HDR output settings, through the output's own encoding like the export.
+void renderSdr(LabImage& lab, const procparams::ColorManagementParams& icm, bool multiThread);
 
 // Flags classifying each pixel of HDR output relative to SDR, as shown by the clipping indicators.
 enum HdrClipFlag : uint8_t {
@@ -101,7 +109,6 @@ void computeClipFlags(const LabImage& lab, int cx, int cy, int cw, int ch, const
 // Renders a region of a Lab image as the HDR output would show it on an ideal HDR display: linear BT.2020
 // light relative to paper white, 3 floats per pixel, row by row, after the same encoding (and so, the same
 // clipping at the maximum luminance or HLG peak) as the export. Leaves `out` empty if the output isn't HDR.
-// TODO: once the SDR rendering becomes selectable, the SDR side of the preview must use it too.
 void computePreview(const LabImage& lab, int cx, int cy, int cw, int ch, const procparams::ColorManagementParams& icm, std::vector<float>& out, bool multiThread);
 
 // H.273 / CICP codes describing a profile, 2 (unspecified) when not matched exactly.

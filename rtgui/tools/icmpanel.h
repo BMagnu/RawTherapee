@@ -180,6 +180,7 @@ private:
     rtengine::ProcEvent EvOPaperwhiteNits;
     rtengine::ProcEvent EvOMaxNits;
     rtengine::ProcEvent EvOSdrBaseProfile;
+    rtengine::ProcEvent EvOSdrFallback;
     rtengine::ProcEvent EvICMwgamgain;
 
     LabGrid *labgridcie;
@@ -248,6 +249,8 @@ private:
     Adjuster* oMaxNits;
     MyComboBoxText* oSdrBaseNames;
     sigc::connection osdrbasenamesconn;
+    MyComboBoxText* oSdrFallback;
+    sigc::connection osdrfallbackconn;
     std::unique_ptr<PopUpButton> oRendIntent;
     sigc::connection orendintentconn;
     Gtk::RadioButton* iunchanged;
@@ -266,6 +269,7 @@ private:
     void updateRenderingIntent(const Glib::ustring &profile);
     void updateAbsoluteLuminance(const Glib::ustring &profile);
     void osdrBaseChanged();
+    void osdrFallbackChanged();
     void foldAllButMe(GdkEventButton *event, MyExpander *expander, const MyExpander *parent);
 
     float nextrx;

@@ -1028,6 +1028,12 @@ struct SpotParams {
   * Parameters of the color spaces used during the processing
   */
 struct ColorManagementParams {
+    // How HDR output is rendered for SDR (the gain map base, and the non-HDR view)
+    enum class SdrFallback {
+        CLIP,     // per channel hard clip at paper white and the SDR gamut
+        ROLL_OFF  // highlight shoulder on the largest channel keeping hue and saturation, then desaturation into the SDR gamut
+    };
+
     enum class WorkingTrc {
         NONE,
         CUSTOM,
@@ -1154,6 +1160,7 @@ struct ColorManagementParams {
     double outputPaperwhiteNits;
     double outputMaxNits;
     Glib::ustring outputSdrBaseProfile; // Primaries and curve of the SDR fallback (gain map base) of HDR output
+    SdrFallback outputSdrFallback;
 
     static const Glib::ustring NoICMString;
     static const Glib::ustring NoProfileString;

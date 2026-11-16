@@ -125,9 +125,9 @@ void ImageIO::setOutputProfile(const ProfileContent& pdata)
     profileData = pdata;
 }
 
-void ImageIO::setHdrInfo(const ProfileContent& sdrBaseProfile, double paperwhiteNits, double maxNits)
+void ImageIO::setHdrInfo(const ProfileContent& sdrBaseProfile, double paperwhiteNits, double maxNits, procparams::ColorManagementParams::SdrFallback sdrFallback)
 {
-    hdrInfo = HdrInfo{sdrBaseProfile, paperwhiteNits, maxNits};
+    hdrInfo = HdrInfo{sdrBaseProfile, paperwhiteNits, maxNits, sdrFallback};
 }
 
 ImageIO::ImageIO() :
@@ -1421,6 +1421,7 @@ int ImageIO::buildAvifGainMap(void* opaqueImage, int bps, int quality, TransferF
     const std::array<double, 3> luma = hdr::profileLuma(hdrProfile.get());
     const double paperwhite = LIM(hdrInfo->paperwhiteNits, 1.0, 10000.0);
     const double maxNits = hdrInfo->maxNits;
+    const hdr::SdrRendering sdrRendering = hdr::sdrRendering(transfer, paperwhite, maxNits, hdrInfo->sdrFallback, baseProfile.get());
 
     // The base image is described by the base profile, but by CICP only: gain map appliers, libavif's
     // included, generally don't support ICC described base images, and the base profile is chosen
@@ -1551,7 +1552,7 @@ int ImageIO::buildAvifGainMap(void* opaqueImage, int bps, int quality, TransferF
                 hdrLinear(index, lin);
 
                 float sdr[3];
-                hdr::sdrFromHdrLinear(hdrToBase, lin, sdr);
+                hdr::sdrFromHdrLinear(sdrRendering, hdrToBase, lin, sdr);
 
                 uint16_t base[3];
 

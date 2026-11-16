@@ -27,6 +27,7 @@
 #include "imagedimensions.h"
 #include "imageformat.h"
 #include "metadata.h"
+#include "procparams.h"
 #include "rtengine.h"
 
 enum {
@@ -67,6 +68,7 @@ protected:
         ProfileContent sdrBaseProfile;
         double paperwhiteNits;
         double maxNits;
+        procparams::ColorManagementParams::SdrFallback sdrFallback;
     };
     std::optional<HdrInfo> hdrInfo;
     int profileLength;
@@ -137,7 +139,7 @@ public:
     void setOutputProfile(const ProfileContent& pdata);
     // For HDR output: the profile of the SDR rendering (gain map base), and the luminances the
     // output is encoded with.
-    void setHdrInfo(const ProfileContent& sdrBaseProfile, double paperwhiteNits, double maxNits);
+    void setHdrInfo(const ProfileContent& sdrBaseProfile, double paperwhiteNits, double maxNits, procparams::ColorManagementParams::SdrFallback sdrFallback);
 
     bool saveMetadata(const Glib::ustring &fname) const;
 

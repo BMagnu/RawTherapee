@@ -1487,6 +1487,7 @@ HISTORY_MSG_ICM_GAMUT;Gamut control
 HISTORY_MSG_ICM_MAXNITS;Output - Maximum luminance
 HISTORY_MSG_ICM_PAPERWHITE;Output - Paper white
 HISTORY_MSG_ICM_SDRBASE;Output - SDR base profile
+HISTORY_MSG_ICM_SDRFALLBACK;Output - SDR fallback
 HISTORY_MSG_ICM_GREROT;Primaries Green rotation
 HISTORY_MSG_ICM_GRESAT;Primaries Green saturation
 HISTORY_MSG_ICM_GREX;Primaries Green X
@@ -3031,6 +3032,10 @@ TP_ICM_REDFRAME;Custom Primaries
 TP_ICM_SAVEREFERENCE;Save Reference Image
 TP_ICM_SDRBASE;SDR base
 TP_ICM_SDRBASE_TOOLTIP;Profile of the SDR rendering of HDR output. It is used for the SDR fallback image stored alongside the HDR image (AVIF gain map), which is the HDR image with everything brighter than paper white, or outside this profile's gamut, clipped.
+TP_ICM_SDRFALLBACK;SDR fallback
+TP_ICM_SDRFALLBACK_CLIP;Clip
+TP_ICM_SDRFALLBACK_ROLLOFF;Roll-off
+TP_ICM_SDRFALLBACK_TOOLTIP;How HDR output is rendered for SDR: the SDR fallback stored alongside the HDR image (AVIF gain map), and the preview while the HDR preview is off.\n<b>Clip</b>: everything brighter than paper white, or outside the SDR base gamut, is clipped per channel. Bright saturated colors lose their hue.\n<b>Roll-off</b>: values up to 75% of paper white are kept, brighter ones are compressed smoothly up to the maximum luminance, keeping their hue and saturation. Colors outside the SDR gamut are desaturated towards gray of the same luminance.
 Only profiles describable by CICP codes, with an SDR transfer curve, are listed.
 TP_ICM_SAVEREFERENCE_APPLYWB;Apply white balance
 TP_ICM_SAVEREFERENCE_APPLYWB_TOOLTIP;Generally, apply the white balance when saving images to create ICC profiles, and do not apply the white balance to create DCP profiles.

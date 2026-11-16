@@ -695,6 +695,7 @@ void ParamsEdited::set(bool v)
     icm.outputPaperwhiteNits = v;
     icm.outputMaxNits = v;
     icm.outputSdrBaseProfile = v;
+    icm.outputSdrFallback = v;
     icm.wGamma = v;
     icm.wSlope = v;
     icm.wmidtcie = v;
@@ -2376,6 +2377,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         icm.outputPaperwhiteNits = icm.outputPaperwhiteNits && p.icm.outputPaperwhiteNits == other.icm.outputPaperwhiteNits;
         icm.outputMaxNits = icm.outputMaxNits && p.icm.outputMaxNits == other.icm.outputMaxNits;
         icm.outputSdrBaseProfile = icm.outputSdrBaseProfile && p.icm.outputSdrBaseProfile == other.icm.outputSdrBaseProfile;
+        icm.outputSdrFallback = icm.outputSdrFallback && p.icm.outputSdrFallback == other.icm.outputSdrFallback;
         icm.wGamma = icm.wGamma && p.icm.wGamma == other.icm.wGamma;
         icm.wSlope = icm.wSlope && p.icm.wSlope == other.icm.wSlope;
         icm.wmidtcie = icm.wmidtcie && p.icm.wmidtcie == other.icm.wmidtcie;
@@ -7772,6 +7774,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
     if (icm.outputSdrBaseProfile) {
         toEdit.icm.outputSdrBaseProfile = mods.icm.outputSdrBaseProfile;
+    }
+
+    if (icm.outputSdrFallback) {
+        toEdit.icm.outputSdrFallback = mods.icm.outputSdrFallback;
     }
 
     if (icm.wGamma) {
